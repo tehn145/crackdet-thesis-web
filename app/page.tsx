@@ -21,9 +21,13 @@ interface Task {
 
 const STORAGE_KEY = "thesis-tracker:tasks";
 const CURRENT_USER_KEY = "thesis-tracker:current-user";
+const UNLOCKED_KEY = "thesis-tracker:unlocked";
 const ASSIGNEES = ["Kim Thanh", "Cong Thanh"];
 
 const THESIS_TITLE = "Deep Learning-Based Surface Damage Detection and Classification for Civil Infrastructure";
+
+/** Access codes allowed to unlock the tracker (student IDs). */
+const VALID_ACCESS_CODES = ["23521447", "23521463"];
 
 const STATUS_META: Record<Status, { label: string; badge: string; dot: string }> = {
   todo: { label: "Not Started", badge: "bg-slate-100 text-slate-600 border-slate-300", dot: "bg-slate-400" },
@@ -149,12 +153,22 @@ const Icon = {
       <path d="M4 7h10.5M14.5 7L11.5 4M16 13H5.5M5.5 13l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
+  Lock: (p: { className?: string }) => (
+    <svg viewBox="0 0 20 20" fill="none" className={p.className}>
+      <rect x="4" y="9" width="12" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6.5 9V6.5a3.5 3.5 0 017 0V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="10" cy="13" r="1.2" fill="currentColor" />
+    </svg>
+  ),
 };
 
 /* ------------------------------- Component ------------------------------- */
 
 export default function Home() {
   const [hydrated, setHydrated] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
+  const [accessCode, setAccessCode] = useState("");
+  const [accessError, setAccessError] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [view, setView] = useState<ViewMode>("dashboard");
   const [currentUser, setCurrentUser] = useState<string>(ASSIGNEES[0]);
@@ -181,6 +195,7 @@ export default function Home() {
       setCurrentUser(user);
       setFormData(emptyForm(user));
       setTasks(raw ? (JSON.parse(raw) as Task[]) : seedTasks());
+      setUnlocked(window.localStorage.getItem(UNLOCKED_KEY) === "true");
     } catch {
       setTasks(seedTasks());
     }
