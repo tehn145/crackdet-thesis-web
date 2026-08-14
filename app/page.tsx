@@ -45,9 +45,15 @@ const CURRENT_USER_KEY = "thesis-tracker:current-user";
 const UNLOCKED_KEY = "thesis-tracker:unlocked";
 const ASSIGNEES = ["Kim Thanh", "Cong Thanh"];
 
-const THESIS_TITLE = "Deep Learning-Based Surface Damage Detection and Classification for Civil Infrastructure";
+const THESIS_TITLE =
+  "Deep Learning-Based Surface Damage Detection and Classification for Civil Infrastructure";
 
 const VALID_ACCESS_CODES = ["23521447", "23521463"];
+
+const ACCESS_CODE_TO_USER: Record<string, string> = {
+  "23521447": "Kim Thanh",
+  "23521463": "Cong Thanh",
+};
 
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 const SESSION_CHECK_INTERVAL_MS = 60 * 1000;
@@ -121,7 +127,8 @@ const toDatetimeLocal = (iso?: string): string => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-const fromDatetimeLocal = (value: string): string | undefined => (value ? new Date(value).toISOString() : undefined);
+const fromDatetimeLocal = (value: string): string | undefined =>
+  value ? new Date(value).toISOString() : undefined;
 
 const readUnlockSession = (): boolean => {
   try {
@@ -201,7 +208,12 @@ const Icon = {
   ),
   Docs: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="none" className={p.className}>
-      <path d="M5 2.5h7l3.5 3.5V17a1 1 0 01-1 1H5a1 1 0 01-1-1V3.5a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path
+        d="M5 2.5h7l3.5 3.5V17a1 1 0 01-1 1H5a1 1 0 01-1-1V3.5a1 1 0 011-1z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
       <path d="M12 2.5V6a1 1 0 001 1h3.5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
   ),
@@ -218,17 +230,30 @@ const Icon = {
   ),
   Dots: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="currentColor" className={p.className}>
-      <circle cx="10" cy="4" r="1.5" /><circle cx="10" cy="10" r="1.5" /><circle cx="10" cy="16" r="1.5" />
+      <circle cx="10" cy="4" r="1.5" />
+      <circle cx="10" cy="10" r="1.5" />
+      <circle cx="10" cy="16" r="1.5" />
     </svg>
   ),
   Pencil: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="none" className={p.className}>
-      <path d="M13.5 3.5l3 3L6 17H3v-3l10.5-10.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path
+        d="M13.5 3.5l3 3L6 17H3v-3l10.5-10.5z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
     </svg>
   ),
   Trash: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="none" className={p.className}>
-      <path d="M4 6h12M8 6V4.5A1.5 1.5 0 019.5 3h1A1.5 1.5 0 0112 4.5V6m-6.5 0l.6 10a1 1 0 001 1h4.8a1 1 0 001-1l.6-10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M4 6h12M8 6V4.5A1.5 1.5 0 019.5 3h1A1.5 1.5 0 0112 4.5V6m-6.5 0l.6 10a1 1 0 001 1h4.8a1 1 0 001-1l.6-10"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   ),
   X: (p: { className?: string }) => (
@@ -238,17 +263,35 @@ const Icon = {
   ),
   ArrowRight: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="none" className={p.className}>
-      <path d="M4 10h11M10 5l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M4 10h11M10 5l5 5-5 5"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   ),
   ArrowLeft: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="none" className={p.className}>
-      <path d="M16 10H5M10 5l-5 5 5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M16 10H5M10 5l-5 5 5 5"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   ),
   Undo: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="none" className={p.className}>
-      <path d="M5 8h7a3.5 3.5 0 010 7H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M5 8h7a3.5 3.5 0 010 7H9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
       <path d="M8 4.5L5 8l3 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
@@ -260,7 +303,13 @@ const Icon = {
   ),
   Swap: (p: { className?: string }) => (
     <svg viewBox="0 0 20 20" fill="none" className={p.className}>
-      <path d="M4 7h10.5M14.5 7L11.5 4M16 13H5.5M5.5 13l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M4 7h10.5M14.5 7L11.5 4M16 13H5.5M5.5 13l3 3"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   ),
   Lock: (p: { className?: string }) => (
@@ -340,7 +389,7 @@ export default function Home() {
     loadData();
   }, []);
 
-  /* Realtime: tự cập nhật khi máy khác thay đổi */
+  /* Realtime */
   useEffect(() => {
     if (!hydrated) return;
 
@@ -377,7 +426,6 @@ export default function Home() {
     };
   }, [hydrated]);
 
-  /* Keep time remaining live */
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 30 * 1000);
     return () => window.clearInterval(id);
@@ -413,10 +461,7 @@ export default function Home() {
           sendDeadlineWarningEmail(t.name, t.deadline, t.assignee).then(async (ok) => {
             if (ok) {
               const warnedAt = nowISO();
-              await supabase
-                .from("tasks")
-                .update({ deadline_warned_at: warnedAt })
-                .eq("id", t.id);
+              await supabase.from("tasks").update({ deadline_warned_at: warnedAt }).eq("id", t.id);
               setTasks((prev) =>
                 prev.map((x) => (x.id === t.id ? { ...x, deadlineWarnedAt: warnedAt } : x))
               );
@@ -458,12 +503,17 @@ export default function Home() {
   const handleUnlock = (e: any) => {
     e.preventDefault();
     const code = accessCode.trim();
-    if (VALID_ACCESS_CODES.includes(code)) {
+    const user = ACCESS_CODE_TO_USER[code];
+
+    if (user) {
       setUnlocked(true);
+      setCurrentUser(user);
+      setFormData(emptyForm(user));
       setAccessError("");
       setAccessCode("");
       try {
         window.sessionStorage.setItem(UNLOCKED_KEY, JSON.stringify({ unlockedAt: Date.now() }));
+        window.localStorage.setItem(CURRENT_USER_KEY, user);
       } catch {}
     } else {
       setAccessError("Incorrect Password. Please try again.");
@@ -558,7 +608,8 @@ export default function Home() {
     const estDaysTrim = formData.estimatedDays.trim();
     const estDaysNum = estDaysTrim === "" ? NaN : Number(estDaysTrim);
     const validEstDays = !Number.isNaN(estDaysNum) && estDaysNum > 0 ? estDaysNum : undefined;
-    const computedDeadline = validEstDays !== undefined ? computeDeadline(formData.date, validEstDays) : undefined;
+    const computedDeadline =
+      validEstDays !== undefined ? computeDeadline(formData.date, validEstDays) : undefined;
 
     const cleaned = {
       date: formData.date,
@@ -580,7 +631,8 @@ export default function Home() {
           estimatedDays: validEstDays,
           deadline: computedDeadline,
           deadlineWarnedAt: deadlineChanged ? undefined : prevTask?.deadlineWarnedAt,
-          assignedBy: prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
+          assignedBy:
+            prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
           updatedAt: nowISO(),
         };
 
@@ -776,7 +828,11 @@ export default function Home() {
   );
 
   if (!hydrated) {
-    return <div className="min-h-screen bg-white grid place-items-center text-slate-400 text-sm">Loading data...</div>;
+    return (
+      <div className="min-h-screen bg-white grid place-items-center text-slate-400 text-sm">
+        Loading data...
+      </div>
+    );
   }
 
   if (!unlocked) {
@@ -789,11 +845,15 @@ export default function Home() {
           <div className="mx-auto mb-5 w-14 h-14 rounded-2xl bg-[#FDF1E7] grid place-items-center text-[#D96B1F]">
             <Icon.Lock className="w-6 h-6" />
           </div>
-          <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase mb-1">Undergraduate Thesis</p>
+          <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase mb-1">
+            Undergraduate Thesis
+          </p>
           <h1 className="text-xl font-extrabold text-slate-900 mb-2">Welcome to thesis/tracker</h1>
           <p className="text-sm text-slate-500 mb-6 leading-snug">{THESIS_TITLE}</p>
           <label className="block text-left mb-4">
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Password</span>
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">
+              Password
+            </span>
             <input
               autoFocus
               type="password"
@@ -814,7 +874,9 @@ export default function Home() {
           >
             Unlock
           </button>
-          <p className="text-[11px] text-slate-400 mt-4">Only Kim Thanh and Cong Thanh can access this tracker.</p>
+          <p className="text-[11px] text-slate-400 mt-4">
+            Only Kim Thanh and Cong Thanh can access this tracker.
+          </p>
         </form>
       </div>
     );
@@ -825,7 +887,9 @@ export default function Home() {
       {/* Sidebar */}
       <aside className="hidden md:flex md:flex-col w-60 shrink-0 bg-white border-r border-slate-200 p-5">
         <div className="mb-6 pb-4 border-b border-slate-200">
-          <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase">Undergraduate Thesis</p>
+          <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase">
+            Undergraduate Thesis
+          </p>
           <h1 className="text-lg font-bold text-slate-900 font-mono">
             thesis<span className="text-[#D96B1F]">/</span>tracker
           </h1>
@@ -834,21 +898,12 @@ export default function Home() {
           </p>
         </div>
 
+        {/* User info (không cho chọn nữa) */}
         <div className="mb-6 pb-4 border-b border-slate-200">
-          <label className="block">
-            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide mb-1.5 block">You are</span>
-            <select
-              value={currentUser}
-              onChange={(e) => setCurrentUser(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-800 focus:outline-none focus:border-[#D96B1F]"
-            >
-              {ASSIGNEES.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-          </label>
+          <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide mb-1.5">
+            You are
+          </p>
+          <p className="text-sm font-semibold text-slate-800">{currentUser}</p>
         </div>
 
         <nav className="space-y-1">
@@ -894,17 +949,10 @@ export default function Home() {
             <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">Thesis Progress Tracker</h2>
           </div>
           <div className="flex items-center gap-2">
-            <select
-              value={currentUser}
-              onChange={(e) => setCurrentUser(e.target.value)}
-              className="md:hidden bg-white border border-slate-200 rounded-lg px-2.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-[#D96B1F]"
-            >
-              {ASSIGNEES.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
+            {/* Mobile: hiện tên user */}
+            <div className="md:hidden flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium">
+              {currentUser}
+            </div>
             <button
               onClick={handleLock}
               className="md:hidden text-slate-400 hover:text-[#B85A17] p-2.5 rounded-lg border border-slate-200 hover:bg-[#FDF1E7]"
@@ -1271,7 +1319,9 @@ export default function Home() {
             </div>
             <div className="space-y-3">
               {deadlineForm.length === 0 && (
-                <p className="text-sm text-slate-400 italic">Chưa có deadline nào. Thêm mốc đầu tiên bên dưới.</p>
+                <p className="text-sm text-slate-400 italic">
+                  Chưa có deadline nào. Thêm mốc đầu tiên bên dưới.
+                </p>
               )}
               {deadlineForm.map((item) => (
                 <div key={item.id} className="flex items-end gap-2 border border-slate-200 rounded-lg p-3">
@@ -1359,7 +1409,10 @@ export default function Home() {
 
       {/* Add/Edit form modal */}
       {formOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4" onClick={resetForm}>
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4"
+          onClick={resetForm}
+        >
           <form
             onSubmit={handleAddOrUpdate}
             onClick={(e) => e.stopPropagation()}
@@ -1367,8 +1420,15 @@ export default function Home() {
             className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-lg p-6"
           >
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold text-slate-900">{editingId ? "Edit Task" : "Add New Task"}</h3>
-              <button type="button" onClick={resetForm} className="text-slate-400 hover:text-slate-700" aria-label="Close">
+              <h3 className="font-semibold text-slate-900">
+                {editingId ? "Edit Task" : "Add New Task"}
+              </h3>
+              <button
+                type="button"
+                onClick={resetForm}
+                className="text-slate-400 hover:text-slate-700"
+                aria-label="Close"
+              >
                 <Icon.X className="w-4 h-4" />
               </button>
             </div>
@@ -1404,7 +1464,12 @@ export default function Home() {
                   />
                 </Field>
                 <Field label="Assignee">
-                  <select name="assignee" value={formData.assignee} onChange={handleInputChange} className="input">
+                  <select
+                    name="assignee"
+                    value={formData.assignee}
+                    onChange={handleInputChange}
+                    className="input"
+                  >
                     {ASSIGNEES.map((a) => (
                       <option key={a}>{a}</option>
                     ))}
@@ -1425,18 +1490,24 @@ export default function Home() {
               </Field>
               {estimatedDeadlinePreview && (
                 <p className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                  Deadline dự kiến: <span className="font-semibold text-slate-800">{estimatedDeadlinePreview}</span>
+                  Deadline dự kiến:{" "}
+                  <span className="font-semibold text-slate-800">{estimatedDeadlinePreview}</span>
                 </p>
               )}
               {formData.assignee !== currentUser && (
                 <p className="flex items-center gap-1.5 text-xs text-[#B85A17] bg-[#FDF1E7] border border-[#F0C39A] rounded-lg px-3 py-2">
                   <Icon.Mail className="w-3.5 h-3.5 shrink-0" />
-                  When you save, the system will email {formData.assignee} to let them know you just assigned this task
-                  to them.
+                  When you save, the system will email {formData.assignee} to let them know you just
+                  assigned this task to them.
                 </p>
               )}
               <Field label="Status">
-                <select name="status" value={formData.status} onChange={handleInputChange} className="input">
+                <select
+                  name="status"
+                  value={formData.status}
+                  onChange={handleInputChange}
+                  className="input"
+                >
                   {STATUS_ORDER.map((s) => (
                     <option key={s} value={s}>
                       {STATUS_META[s].label}
@@ -1515,10 +1586,20 @@ export default function Home() {
   );
 }
 
-function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
+function Field({
+  label,
+  error,
+  children,
+}: {
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">{label}</span>
+      <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">
+        {label}
+      </span>
       {children}
       {error && <span className="text-xs text-red-600 mt-1 block">{error}</span>}
     </label>
