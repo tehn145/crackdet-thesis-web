@@ -260,7 +260,7 @@ export default function Home() {
         /* storage unavailable — access still granted for this session */
       }
     } else {
-      setAccessError("Incorrect student ID. Please try again.");
+      setAccessError("Incorrect Password. Please try again.");
     }
   };
 
@@ -473,7 +473,7 @@ export default function Home() {
           <h1 className="text-xl font-extrabold text-slate-900 mb-2">Welcome to thesis/tracker</h1>
           <p className="text-sm text-slate-500 mb-6 leading-snug">{THESIS_TITLE}</p>
           <label className="block text-left mb-4">
-            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Student ID</span>
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Password</span>
             <input
               autoFocus
               type="password"
@@ -483,7 +483,7 @@ export default function Home() {
                 setAccessCode(e.target.value);
                 setAccessError("");
               }}
-              placeholder="Enter your student ID..."
+              placeholder="Enter your Secret Code..."
               className={`input text-center tracking-widest ${accessError ? "input-error" : ""}`}
             />
             {accessError && <span className="text-xs text-red-600 mt-1.5 block">{accessError}</span>}
