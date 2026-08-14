@@ -343,7 +343,7 @@ export default function Home() {
         })}
       </nav>
 
-      <main className="flex-1 p-5 md:p-10 pb-24 md:pb-10 overflow-y-auto">
+      <main className="flex-1 p-5 md:p-10 pb-24 md:pb-10">
         <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
           <div>
             <p className="font-mono text-xs text-slate-400 uppercase tracking-wider mb-1">
