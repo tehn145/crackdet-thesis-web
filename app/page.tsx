@@ -35,15 +35,12 @@ type TaskFormData = {
 
 type DeadlineLevel = "none" | "done" | "safe" | "warning" | "urgent" | "overdue";
 
-/** Global project deadlines — thesis / report / paper. */
-type DeadlineKey = "thesis" | "report" | "paper";
-type ProjectDeadlines = Partial<Record<DeadlineKey, string>>; // ISO datetime per key
-
-const DEADLINE_LABELS: Record<DeadlineKey, string> = {
-  thesis: "Khóa luận",
-  report: "Báo cáo",
-  paper: "Bài báo",
-};
+/** Global project deadlines — user-named entries (thesis, report, paper, or anything else). */
+interface ProjectDeadlineItem {
+  id: string;
+  name: string;
+  deadline: string; // ISO datetime
+}
 
 const STORAGE_KEY = "thesis-tracker:tasks";
 const CURRENT_USER_KEY = "thesis-tracker:current-user";
@@ -281,8 +278,8 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState<string>(ASSIGNEES[0]);
   const [formData, setFormData] = useState<TaskFormData>(emptyForm(ASSIGNEES[0]));
   const [errors, setErrors] = useState<{ name?: string; date?: string }>({});
-  const [deadlines, setDeadlines] = useState<ProjectDeadlines>({});
-  const [deadlineForm, setDeadlineForm] = useState<ProjectDeadlines>({});
+  const [deadlines, setDeadlines] = useState<ProjectDeadlineItem[]>([]);
+  const [deadlineForm, setDeadlineForm] = useState<ProjectDeadlineItem[]>([]);
   const [deadlineModalOpen, setDeadlineModalOpen] = useState(false);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -307,7 +304,8 @@ export default function Home() {
       setFormData(emptyForm(user));
       setTasks(raw ? (JSON.parse(raw) as Task[]) : seedTasks());
       const rawDeadlines = window.localStorage.getItem(DEADLINES_KEY);
-      setDeadlines(rawDeadlines ? (JSON.parse(rawDeadlines) as ProjectDeadlines) : {});
+      const parsedDeadlines = rawDeadlines ? JSON.parse(rawDeadlines) : [];
+      setDeadlines(Array.isArray(parsedDeadlines) ? (parsedDeadlines as ProjectDeadlineItem[]) : []);
       // Unlock state lives in sessionStorage: it disappears when the tab is closed,
       // and it also carries a timestamp so it expires after SESSION_DURATION_MS.
       setUnlocked(readUnlockSession());
@@ -618,10 +616,9 @@ export default function Home() {
 
   /** Nearest upcoming (or, if all passed, most recently overdue) project deadline. */
   const nearestDeadline = useMemo(() => {
-    const entries = (Object.keys(DEADLINE_LABELS) as DeadlineKey[])
-      .map((key) => ({ key, iso: deadlines[key] }))
-      .filter((e): e is { key: DeadlineKey; iso: string } => Boolean(e.iso))
-      .map((e) => ({ key: e.key, iso: e.iso, diff: new Date(e.iso).getTime() - nowTick }));
+    const entries = deadlines
+      .filter((d) => d.name.trim() && d.deadline)
+      .map((d) => ({ ...d, diff: new Date(d.deadline).getTime() - nowTick }));
     if (entries.length === 0) return null;
     const upcoming = entries.filter((e) => e.diff > 0).sort((a, b) => a.diff - b.diff);
     if (upcoming.length > 0) return upcoming[0];
@@ -836,7 +833,7 @@ export default function Home() {
               <span className="text-[10px] font-mono uppercase tracking-wide opacity-70">Deadline</span>
               {nearestDeadline ? (
                 <span className="text-sm font-semibold leading-tight">
-                  {DEADLINE_LABELS[nearestDeadline.key]} ·{" "}
+                  {nearestDeadline.name} ·{" "}
                   {nearestDeadline.diff <= 0 ? `Quá hạn ${formatDuration(nearestDeadline.diff)}` : `Còn ${formatDuration(nearestDeadline.diff)}`}
                 </span>
               ) : (
@@ -1082,29 +1079,69 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Global deadline modal — thesis / report / paper */}
+      {/* Global deadline modal — add/rename/remove any number of named deadlines */}
       {deadlineModalOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setDeadlineModalOpen(false)}>
-          <div onClick={(e) => e.stopPropagation()} className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div onClick={(e) => e.stopPropagation()} className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-semibold text-slate-900">Deadline chung</h3>
               <button type="button" onClick={() => setDeadlineModalOpen(false)} className="text-slate-400 hover:text-slate-700" aria-label="Close">
                 <Icon.X className="w-4 h-4" />
               </button>
             </div>
-            <div className="space-y-4">
-              {(Object.keys(DEADLINE_LABELS) as DeadlineKey[]).map((key) => (
-                <Field key={key} label={DEADLINE_LABELS[key]}>
-                  <input
-                    type="datetime-local"
-                    value={toDatetimeLocal(deadlineForm[key])}
-                    onChange={(e) =>
-                      setDeadlineForm((prev) => ({ ...prev, [key]: fromDatetimeLocal(e.target.value) }))
-                    }
-                    className="input"
-                  />
-                </Field>
+            <div className="space-y-3">
+              {deadlineForm.length === 0 && (
+                <p className="text-sm text-slate-400 italic">Chưa có deadline nào. Thêm mốc đầu tiên bên dưới.</p>
+              )}
+              {deadlineForm.map((item) => (
+                <div key={item.id} className="flex items-end gap-2 border border-slate-200 rounded-lg p-3">
+                  <div className="flex-1 space-y-2">
+                    <Field label="Tên">
+                      <input
+                        type="text"
+                        value={item.name}
+                        onChange={(e) =>
+                          setDeadlineForm((prev) => prev.map((d) => (d.id === item.id ? { ...d, name: e.target.value } : d)))
+                        }
+                        placeholder="Ví dụ: Khóa luận, Báo cáo, Bài báo..."
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="Thời điểm deadline">
+                      <input
+                        type="datetime-local"
+                        value={toDatetimeLocal(item.deadline)}
+                        onChange={(e) =>
+                          setDeadlineForm((prev) =>
+                            prev.map((d) => (d.id === item.id ? { ...d, deadline: fromDatetimeLocal(e.target.value) ?? "" } : d))
+                          )
+                        }
+                        className="input"
+                      />
+                    </Field>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDeadlineForm((prev) => prev.filter((d) => d.id !== item.id))}
+                    className="text-slate-400 hover:text-red-600 p-2 rounded-md hover:bg-red-50 shrink-0"
+                    aria-label="Xóa deadline"
+                  >
+                    <Icon.Trash className="w-4 h-4" />
+                  </button>
+                </div>
               ))}
+              <button
+                type="button"
+                onClick={() =>
+                  setDeadlineForm((prev) => [
+                    ...prev,
+                    { id: `${Date.now()}-${prev.length}`, name: "", deadline: "" },
+                  ])
+                }
+                className="flex items-center gap-2 text-sm font-medium text-[#D96B1F] hover:underline"
+              >
+                <Icon.Plus className="w-3.5 h-3.5" /> Thêm deadline
+              </button>
             </div>
             <div className="flex gap-3 mt-6">
               <button
@@ -1117,7 +1154,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => {
-                  setDeadlines(deadlineForm);
+                  setDeadlines(deadlineForm.filter((d) => d.name.trim() && d.deadline));
                   setDeadlineModalOpen(false);
                 }}
                 className="flex-1 py-2.5 rounded-lg bg-[#D96B1F] text-white font-semibold hover:bg-[#c25f1a] text-sm"
