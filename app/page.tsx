@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { superbase } from "@/lib/superbase";
 
 /* ----------------------------- Types & data ----------------------------- */
 
@@ -300,11 +300,11 @@ export default function Home() {
   const toastTimer = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  /* Load từ Supabase */
+  /* Load từ superbase */
   useEffect(() => {
     const loadData = async () => {
       try {
-        const { data: tasksData, error: tasksError } = await supabase
+        const { data: tasksData, error: tasksError } = await superbase
           .from("tasks")
           .select("*")
           .order("date", { ascending: true });
@@ -312,7 +312,7 @@ export default function Home() {
         if (tasksError) throw tasksError;
         setTasks((tasksData ?? []).map(fromDb));
 
-        const { data: deadlinesData, error: deadlinesError } = await supabase
+        const { data: deadlinesData, error: deadlinesError } = await superbase
           .from("project_deadlines")
           .select("*");
 
@@ -344,13 +344,13 @@ export default function Home() {
   useEffect(() => {
     if (!hydrated) return;
 
-    const channel = supabase
+    const channel = superbase
       .channel("tasks-changes")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "tasks" },
         async () => {
-          const { data } = await supabase.from("tasks").select("*").order("date");
+          const { data } = await superbase.from("tasks").select("*").order("date");
           if (data) setTasks(data.map(fromDb));
         }
       )
@@ -358,7 +358,7 @@ export default function Home() {
         "postgres_changes",
         { event: "*", schema: "public", table: "project_deadlines" },
         async () => {
-          const { data } = await supabase.from("project_deadlines").select("*");
+          const { data } = await superbase.from("project_deadlines").select("*");
           if (data) {
             setDeadlines(
               data.map((d: any) => ({
@@ -373,7 +373,7 @@ export default function Home() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      superbase.removeChannel(channel);
     };
   }, [hydrated]);
 
@@ -413,7 +413,7 @@ export default function Home() {
           sendDeadlineWarningEmail(t.name, t.deadline, t.assignee).then(async (ok) => {
             if (ok) {
               const warnedAt = nowISO();
-              await supabase
+              await superbase
                 .from("tasks")
                 .update({ deadline_warned_at: warnedAt })
                 .eq("id", t.id);
@@ -584,7 +584,7 @@ export default function Home() {
           updatedAt: nowISO(),
         };
 
-        const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", editingId);
+        const { error } = await superbase.from("tasks").update(toDb(updated)).eq("id", editingId);
         if (error) throw error;
 
         setTasks((prev) => prev.map((t) => (t.id === editingId ? updated : t)));
@@ -604,7 +604,7 @@ export default function Home() {
           updatedAt: nowISO(),
         };
 
-        const { data, error } = await supabase
+        const { data, error } = await superbase
           .from("tasks")
           .insert(toDb(newTaskData))
           .select()
@@ -673,7 +673,7 @@ export default function Home() {
   }, [deadlines, nowTick]);
 
   const handleDelete = async (t: Task) => {
-    const { error } = await supabase.from("tasks").delete().eq("id", t.id);
+    const { error } = await superbase.from("tasks").delete().eq("id", t.id);
     if (error) {
       console.error(error);
       showToast("Lỗi khi xóa task");
@@ -684,7 +684,7 @@ export default function Home() {
     setOpenDropdown(null);
     sendStatusEmail(t.name, "Deleted", t.assignee);
     showToast(`Deleted "${t.name}"`, async () => {
-      const { data } = await supabase.from("tasks").insert(toDb(t)).select().single();
+      const { data } = await superbase.from("tasks").insert(toDb(t)).select().single();
       if (data) setTasks((prev) => [...prev, fromDb(data)]);
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
       setToast(null);
@@ -692,7 +692,7 @@ export default function Home() {
   };
 
   const handleStatusChange = async (t: Task, status: Status) => {
-    const { error } = await supabase
+    const { error } = await superbase
       .from("tasks")
       .update({ status, updated_at: nowISO() })
       .eq("id", t.id);
@@ -715,7 +715,7 @@ export default function Home() {
       updatedAt: nowISO(),
     };
 
-    const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", t.id);
+    const { error } = await superbase.from("tasks").update(toDb(updated)).eq("id", t.id);
     if (error) {
       console.error(error);
       showToast("Lỗi khi gán lại task");
@@ -858,7 +858,7 @@ export default function Home() {
         </nav>
         <div className="mt-auto pt-4 border-t border-slate-200">
           <p className="font-mono text-[11px] text-slate-400 mb-3">
-            {tasks.length} tasks · {stats.mine} yours · synced with Supabase
+            {tasks.length} tasks · {stats.mine} yours · synced with superbase
           </p>
           <button
             onClick={handleLock}
@@ -1341,9 +1341,9 @@ export default function Home() {
                 type="button"
                 onClick={async () => {
                   const cleaned = deadlineForm.filter((d) => d.name.trim() && d.deadline);
-                  await supabase.from("project_deadlines").delete().neq("id", "");
+                  await superbase.from("project_deadlines").delete().neq("id", "");
                   if (cleaned.length > 0) {
-                    await supabase.from("project_deadlines").insert(cleaned);
+                    await superbase.from("project_deadlines").insert(cleaned);
                   }
                   setDeadlines(cleaned);
                   setDeadlineModalOpen(false);
