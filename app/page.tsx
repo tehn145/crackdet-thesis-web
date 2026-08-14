@@ -423,13 +423,18 @@ export default function Home() {
 
         {/* Dashboard: git-log style list */}
         {view === "dashboard" && (
-          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm">
             {filteredTasks.length === 0 ? (
               <EmptyState onAdd={() => setFormOpen(true)} />
             ) : (
               <ul className="divide-y divide-slate-100">
                 {filteredTasks.map((t, i) => (
-                  <li key={t.id} className="flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group">
+                  <li
+                    key={t.id}
+                    className={`flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group ${
+                      i === 0 ? "rounded-t-2xl" : ""
+                    } ${i === filteredTasks.length - 1 ? "rounded-b-2xl" : ""}`}
+                  >
                     <div className="relative w-4 shrink-0 flex justify-center">
                       {i !== 0 && <span className="absolute top-0 h-1/2 w-px bg-slate-200" />}
                       {i !== filteredTasks.length - 1 && <span className="absolute bottom-0 h-1/2 w-px bg-slate-200" />}
