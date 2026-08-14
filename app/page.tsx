@@ -247,6 +247,33 @@ export default function Home() {
     toastTimer.current = window.setTimeout(() => setToast(null), 5000);
   };
 
+  const handleUnlock = (e: any) => {
+    e.preventDefault();
+    const code = accessCode.trim();
+    if (VALID_ACCESS_CODES.includes(code)) {
+      setUnlocked(true);
+      setAccessError("");
+      setAccessCode("");
+      try {
+        window.localStorage.setItem(UNLOCKED_KEY, "true");
+      } catch {
+        /* storage unavailable — access still granted for this session */
+      }
+    } else {
+      setAccessError("Incorrect student ID. Please try again.");
+    }
+  };
+
+  const handleLock = () => {
+    setUnlocked(false);
+    setOpenDropdown(null);
+    try {
+      window.localStorage.removeItem(UNLOCKED_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
   /** Email sent whenever a task's status changes (unchanged behavior). */
   const sendStatusEmail = async (taskName: string, status: string, user: string) => {
     try {
@@ -432,6 +459,47 @@ export default function Home() {
     return <div className="min-h-screen bg-white grid place-items-center text-slate-400 text-sm">Loading data...</div>;
   }
 
+  if (!unlocked) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center p-5">
+        <form
+          onSubmit={handleUnlock}
+          className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl shadow-sm p-8 text-center"
+        >
+          <div className="mx-auto mb-5 w-14 h-14 rounded-2xl bg-[#FDF1E7] grid place-items-center text-[#D96B1F]">
+            <Icon.Lock className="w-6 h-6" />
+          </div>
+          <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase mb-1">Undergraduate Thesis</p>
+          <h1 className="text-xl font-extrabold text-slate-900 mb-2">Welcome to thesis/tracker</h1>
+          <p className="text-sm text-slate-500 mb-6 leading-snug">{THESIS_TITLE}</p>
+          <label className="block text-left mb-4">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Student ID</span>
+            <input
+              autoFocus
+              type="password"
+              inputMode="numeric"
+              value={accessCode}
+              onChange={(e) => {
+                setAccessCode(e.target.value);
+                setAccessError("");
+              }}
+              placeholder="Enter your student ID..."
+              className={`input text-center tracking-widest ${accessError ? "input-error" : ""}`}
+            />
+            {accessError && <span className="text-xs text-red-600 mt-1.5 block">{accessError}</span>}
+          </label>
+          <button
+            type="submit"
+            className="w-full py-2.5 rounded-lg bg-[#D96B1F] text-white font-semibold hover:bg-[#c25f1a] transition text-sm"
+          >
+            Unlock
+          </button>
+          <p className="text-[11px] text-slate-400 mt-4">Only Kim Thanh and Cong Thanh can access this tracker.</p>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen bg-white text-slate-800 font-sans">
       {/* Sidebar */}
@@ -463,8 +531,16 @@ export default function Home() {
           {navItem("kanban", "Kanban", Icon.Kanban)}
           {navItem("docs", "Docs", Icon.Docs)}
         </nav>
-        <div className="mt-auto pt-4 border-t border-slate-200 font-mono text-[11px] text-slate-400">
-          {tasks.length} tasks · {stats.mine} yours · saved locally in browser
+        <div className="mt-auto pt-4 border-t border-slate-200">
+          <p className="font-mono text-[11px] text-slate-400 mb-3">
+            {tasks.length} tasks · {stats.mine} yours · saved locally in browser
+          </p>
+          <button
+            onClick={handleLock}
+            className="w-full flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-[#B85A17] hover:bg-[#FDF1E7] px-2.5 py-2 rounded-lg transition"
+          >
+            <Icon.Lock className="w-3.5 h-3.5" /> Lock tracker
+          </button>
         </div>
       </aside>
 
@@ -497,6 +573,13 @@ export default function Home() {
             >
               {ASSIGNEES.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
+            <button
+              onClick={handleLock}
+              className="md:hidden text-slate-400 hover:text-[#B85A17] p-2.5 rounded-lg border border-slate-200 hover:bg-[#FDF1E7]"
+              aria-label="Lock tracker"
+            >
+              <Icon.Lock className="w-4 h-4" />
+            </button>
             <button
               onClick={() => setFormOpen(true)}
               className="flex items-center gap-2 bg-[#D96B1F] text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-[#c25f1a] transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D96B1F]"
