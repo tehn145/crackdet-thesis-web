@@ -11,6 +11,7 @@ interface Task {
   id: number;
   date: string;
   name: string;
+  description: string;
   assignee: string;
   assignedBy: string; // who assigned this task to the assignee
   location: string;
@@ -48,6 +49,7 @@ const seedTasks = (): Task[] => [
     id: 1,
     date: "2026-08-14",
     name: "Literature review on surface damage detection methods",
+    description: "Survey existing CNN/Transformer-based approaches for crack, spalling, and corrosion detection on concrete and steel surfaces; summarize datasets and evaluation metrics used in prior work.",
     assignee: ASSIGNEES[0],
     assignedBy: ASSIGNEES[0],
     location: "Drive/Documents",
@@ -59,6 +61,7 @@ const seedTasks = (): Task[] => [
 const emptyForm = (currentUser: string): Omit<Task, "id" | "updatedAt" | "assignedBy"> => ({
   date: new Date().toISOString().split("T")[0],
   name: "",
+  description: "",
   assignee: currentUser,
   location: "",
   status: "todo",
@@ -299,7 +302,7 @@ export default function Home() {
     e.preventDefault();
     if (!validate()) return;
     setSubmitting(true);
-    const cleaned = { ...formData, name: formData.name.trim(), location: formData.location.trim() };
+    const cleaned = { ...formData, name: formData.name.trim(), description: formData.description.trim(), location: formData.location.trim() };
     await new Promise((r) => setTimeout(r, 300));
 
     if (editingId) {
@@ -335,7 +338,7 @@ export default function Home() {
 
   const handleEdit = (t: Task) => {
     setEditingId(t.id);
-    setFormData({ date: t.date, name: t.name, assignee: t.assignee, location: t.location, status: t.status });
+    setFormData({ date: t.date, name: t.name, description: t.description, assignee: t.assignee, location: t.location, status: t.status });
     setErrors({});
     setOpenDropdown(null);
     setFormOpen(true);
@@ -711,7 +714,7 @@ export default function Home() {
             onSubmit={handleAddOrUpdate}
             onClick={(e) => e.stopPropagation()}
             noValidate
-            className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6"
+            className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-lg p-6"
           >
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-semibold text-slate-900">{editingId ? "Edit Task" : "Add New Task"}</h3>
@@ -728,6 +731,16 @@ export default function Home() {
                   onChange={handleInputChange}
                   placeholder="Enter task name..."
                   className={`input ${errors.name ? "input-error" : ""}`}
+                />
+              </Field>
+              <Field label="Description">
+                <textarea
+                  name="description"
+                  value={formData.description}
+                  onChange={handleInputChange}
+                  placeholder="Add details, scope, or notes about this task..."
+                  rows={4}
+                  className="input resize-y min-h-[96px]"
                 />
               </Field>
               <div className="grid grid-cols-2 gap-4">
