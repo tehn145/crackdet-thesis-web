@@ -3,16 +3,25 @@
 import { useState } from "react";
 
 export default function Home() {
+  // Hàm lấy ngày hôm nay theo chuẩn YYYY-MM-DD
+  const getTodayDate = () => {
+    const today = new Date();
+    // Điều chỉnh múi giờ cục bộ để tránh bị lùi ngày do giờ quốc tế
+    const offset = today.getTimezoneOffset() * 60000;
+    const localISOTime = (new Date(today.getTime() - offset)).toISOString().slice(0, -1);
+    return localISOTime.split('T')[0];
+  };
+
   // Dữ liệu mẫu của bảng
   const [tasks, setTasks] = useState([
-    { id: 1, date: "2026-08-14", name: "Tổng quan tài liệu nhận diện vết nứt", assignee: "Thành", location: "Thư mục Drive/Tài liệu" }
+    { id: 1, date: getTodayDate(), name: "Tổng quan tài liệu nhận diện vết nứt", assignee: "Thành", location: "Thư mục Drive/Tài liệu" }
   ]);
 
-  // Lưu trữ dữ liệu người dùng đang nhập vào form
+  // Lưu trữ dữ liệu người dùng đang nhập vào form, tự động điền ngày hôm nay
   const [formData, setFormData] = useState({
-    date: "",
+    date: getTodayDate(), 
     name: "",
-    assignee: "Thành", // Mặc định là Thành
+    assignee: "Thành",
     location: ""
   });
 
@@ -44,15 +53,15 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           // Ghép thông tin lại để tận dụng form mail cũ
-          taskName: `${formData.name} (Lưu tại: ${formData.location})`,
+          taskName: `${formData.name} (Lưu tại: ${formData.location || 'Không có'})`,
           newStatus: "Được THÊM MỚI vào hệ thống",
           user: formData.assignee,
         }),
       });
       alert("Đã thêm thành công và gửi thông báo qua Email!");
       
-      // Xóa trắng form sau khi thêm xong
-      setFormData({ date: "", name: "", assignee: "Thành", location: "" });
+      // Xóa trắng form sau khi thêm xong nhưng vẫn giữ nguyên ngày hôm nay
+      setFormData({ date: getTodayDate(), name: "", assignee: "Thành", location: "" });
     } catch (error) {
       alert("Lỗi khi gửi email!");
     }
@@ -68,7 +77,6 @@ export default function Home() {
           <p className="text-sm text-slate-400 mt-1">Quản lý khóa luận</p>
         </div>
         <nav className="flex-1 p-4 space-y-2">
-          {/* Menu đang chọn được bôi màu */}
           <button className="w-full text-left p-3 bg-blue-600 rounded-lg font-semibold shadow">
             📊 Dashboard
           </button>
@@ -91,7 +99,7 @@ export default function Home() {
           <form onSubmit={handleAddTask} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Ngày cập nhật</label>
-              <input type="date" name="date" value={formData.date} onChange={handleInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+              <input type="date" name="date" value={formData.date} onChange={handleInputChange} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none font-medium text-gray-700" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tên công việc</label>

@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     const { data, error } = await resend.emails.send({
       from: 'Thesis Tracker <onboarding@resend.dev>',
       // Đã thêm email thứ hai vào danh sách nhận
-      to: ['ngokimthanh1455@gmail.com', '23521463@gm.uit.edu.vn'], 
+      to: ['ngokimthanh1455@gmail.com', 'trancongthanh040205@gmail.com'], 
       subject: `[Tiến độ] ${taskName} -> ${newStatus}`,
       html: `
         <h2>Cập nhật tiến độ khóa luận!</h2>
