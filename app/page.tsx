@@ -12,47 +12,54 @@ interface Task {
   date: string;
   name: string;
   assignee: string;
+  assignedBy: string; // who assigned this task to the assignee
   location: string;
   status: Status;
   updatedAt: string;
 }
 
 const STORAGE_KEY = "thesis-tracker:tasks";
-const ASSIGNEES = ["Kim Thành", "Công Thành"];
+const CURRENT_USER_KEY = "thesis-tracker:current-user";
+const ASSIGNEES = ["Kim Thanh", "Cong Thanh"];
+
+const THESIS_TITLE = "Deep Learning-Based Surface Damage Detection and Classification for Civil Infrastructure";
 
 const STATUS_META: Record<Status, { label: string; badge: string; dot: string }> = {
-  todo: { label: "Chưa bắt đầu", badge: "bg-slate-100 text-slate-600 border-slate-300", dot: "bg-slate-400" },
-  "in-progress": { label: "Đang thực hiện", badge: "bg-amber-50 text-amber-700 border-amber-300", dot: "bg-amber-500" },
-  done: { label: "Hoàn thành", badge: "bg-emerald-50 text-emerald-700 border-emerald-300", dot: "bg-emerald-500" },
+  todo: { label: "Not Started", badge: "bg-slate-100 text-slate-600 border-slate-300", dot: "bg-slate-400" },
+  "in-progress": { label: "In Progress", badge: "bg-amber-50 text-amber-700 border-amber-300", dot: "bg-amber-500" },
+  done: { label: "Completed", badge: "bg-emerald-50 text-emerald-700 border-emerald-300", dot: "bg-emerald-500" },
 };
 
 const STATUS_ORDER: Status[] = ["todo", "in-progress", "done"];
 
 const SORT_LABEL: Record<SortKey, string> = {
-  "date-asc": "Ngày · cũ nhất trước",
-  "date-desc": "Ngày · mới nhất trước",
-  status: "Theo trạng thái",
-  assignee: "Theo người làm",
+  "date-asc": "Date · Oldest first",
+  "date-desc": "Date · Newest first",
+  status: "By status",
+  assignee: "By assignee",
 };
 
 const nowISO = () => new Date().toISOString();
+
+const otherAssignee = (name: string) => ASSIGNEES.find((a) => a !== name) ?? ASSIGNEES[0];
 
 const seedTasks = (): Task[] => [
   {
     id: 1,
     date: "2026-08-14",
-    name: "Tổng quan tài liệu nhận diện vết nứt",
-    assignee: "Thành",
-    location: "Drive/Tài liệu",
+    name: "Literature review on surface damage detection methods",
+    assignee: ASSIGNEES[0],
+    assignedBy: ASSIGNEES[0],
+    location: "Drive/Documents",
     status: "in-progress",
     updatedAt: nowISO(),
   },
 ];
 
-const emptyForm = (): Omit<Task, "id" | "updatedAt"> => ({
+const emptyForm = (currentUser: string): Omit<Task, "id" | "updatedAt" | "assignedBy"> => ({
   date: new Date().toISOString().split("T")[0],
   name: "",
-  assignee: ASSIGNEES[0],
+  assignee: currentUser,
   location: "",
   status: "todo",
 });
@@ -128,6 +135,17 @@ const Icon = {
       <path d="M8 4.5L5 8l3 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
+  Mail: (p: { className?: string }) => (
+    <svg viewBox="0 0 20 20" fill="none" className={p.className}>
+      <rect x="2.5" y="4.5" width="15" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M3 5.5l7 5.5 7-5.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  Swap: (p: { className?: string }) => (
+    <svg viewBox="0 0 20 20" fill="none" className={p.className}>
+      <path d="M4 7h10.5M14.5 7L11.5 4M16 13H5.5M5.5 13l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
 };
 
 /* ------------------------------- Component ------------------------------- */
@@ -136,12 +154,14 @@ export default function Home() {
   const [hydrated, setHydrated] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [view, setView] = useState<ViewMode>("dashboard");
-  const [formData, setFormData] = useState<Omit<Task, "id" | "updatedAt">>(emptyForm());
+  const [currentUser, setCurrentUser] = useState<string>(ASSIGNEES[0]);
+  const [formData, setFormData] = useState<Omit<Task, "id" | "updatedAt" | "assignedBy">>(emptyForm(ASSIGNEES[0]));
   const [errors, setErrors] = useState<{ name?: string; date?: string }>({});
   const [editingId, setEditingId] = useState<number | null>(null);
   const [openDropdown, setOpenDropdown] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
+  const [onlyMine, setOnlyMine] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("date-asc");
   const [submitting, setSubmitting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -153,6 +173,10 @@ export default function Home() {
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
+      const savedUser = window.localStorage.getItem(CURRENT_USER_KEY);
+      const user = savedUser && ASSIGNEES.includes(savedUser) ? savedUser : ASSIGNEES[0];
+      setCurrentUser(user);
+      setFormData(emptyForm(user));
       setTasks(raw ? (JSON.parse(raw) as Task[]) : seedTasks());
     } catch {
       setTasks(seedTasks());
@@ -168,6 +192,15 @@ export default function Home() {
       /* storage unavailable — state still works in-memory */
     }
   }, [tasks, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(CURRENT_USER_KEY, currentUser);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [currentUser, hydrated]);
 
   /* Outside click closes the row menu */
   useEffect(() => {
@@ -196,15 +229,49 @@ export default function Home() {
     toastTimer.current = window.setTimeout(() => setToast(null), 5000);
   };
 
-  const sendEmail = async (taskName: string, status: string, user: string) => {
+  /** Email sent whenever a task's status changes (unchanged behavior). */
+  const sendStatusEmail = async (taskName: string, status: string, user: string) => {
     try {
       await fetch("/api/update-status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskName, newStatus: status, user }),
+        body: JSON.stringify({ type: "status", taskName, newStatus: status, user }),
       });
     } catch {
       /* best-effort notification hook */
+    }
+  };
+
+  /**
+   * Assignment logic + email notification to the assignee.
+   * Only sends when BOTH are true:
+   *  - The task is actually assigned to SOMEONE ELSE (not currentUser), and
+   *  - The assignee actually changed compared to before (avoids duplicate
+   *    emails when saving an edit that doesn't change the assignee).
+   * Returns true/false so the UI knows whether to confirm "email sent".
+   */
+  const notifyAssignment = async (task: Task, previousAssignee?: string): Promise<boolean> => {
+    const assigneeChanged = previousAssignee === undefined || previousAssignee !== task.assignee;
+    const assignedToSomeoneElse = task.assignee !== currentUser;
+    if (!assigneeChanged || !assignedToSomeoneElse) return false;
+
+    try {
+      const res = await fetch("/api/update-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "assignment",
+          taskName: task.name,
+          date: task.date,
+          location: task.location,
+          status: task.status,
+          assignedTo: task.assignee,
+          assignedBy: currentUser,
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
     }
   };
 
@@ -214,7 +281,7 @@ export default function Home() {
   };
 
   const resetForm = () => {
-    setFormData(emptyForm());
+    setFormData(emptyForm(currentUser));
     setErrors({});
     setEditingId(null);
     setFormOpen(false);
@@ -222,8 +289,8 @@ export default function Home() {
 
   const validate = () => {
     const next: typeof errors = {};
-    if (!formData.name.trim()) next.name = "Vui lòng nhập tên công việc";
-    if (!formData.date) next.date = "Vui lòng chọn ngày";
+    if (!formData.name.trim()) next.name = "Please enter a task name";
+    if (!formData.date) next.date = "Please select a date";
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -234,15 +301,33 @@ export default function Home() {
     setSubmitting(true);
     const cleaned = { ...formData, name: formData.name.trim(), location: formData.location.trim() };
     await new Promise((r) => setTimeout(r, 300));
+
     if (editingId) {
-      setTasks((prev) => prev.map((t) => (t.id === editingId ? { ...t, ...cleaned, updatedAt: nowISO() } : t)));
-      await sendEmail(cleaned.name, "Đã chỉnh sửa", cleaned.assignee);
-      showToast(`Đã lưu thay đổi cho "${cleaned.name}"`);
+      const prevTask = tasks.find((t) => t.id === editingId);
+      const updated: Task = {
+        ...(prevTask as Task),
+        ...cleaned,
+        assignedBy: prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
+        updatedAt: nowISO(),
+      };
+      setTasks((prev) => prev.map((t) => (t.id === editingId ? updated : t)));
+      await sendStatusEmail(cleaned.name, "Edited", cleaned.assignee);
+      const emailed = await notifyAssignment(updated, prevTask?.assignee);
+      showToast(
+        emailed
+          ? `Saved and sent assignment email to ${updated.assignee}`
+          : `Saved changes to "${cleaned.name}"`
+      );
     } else {
-      const newTask: Task = { id: Date.now(), ...cleaned, updatedAt: nowISO() };
+      const newTask: Task = { id: Date.now(), ...cleaned, assignedBy: currentUser, updatedAt: nowISO() };
       setTasks((prev) => [...prev, newTask]);
-      await sendEmail(cleaned.name, "Đã thêm mới", cleaned.assignee);
-      showToast(`Đã thêm "${cleaned.name}" vào tiến độ`);
+      await sendStatusEmail(cleaned.name, "Added", cleaned.assignee);
+      const emailed = await notifyAssignment(newTask, undefined);
+      showToast(
+        emailed
+          ? `Added "${cleaned.name}" and sent email to ${newTask.assignee}`
+          : `Added "${cleaned.name}" to the tracker`
+      );
     }
     setSubmitting(false);
     resetForm();
@@ -259,8 +344,8 @@ export default function Home() {
   const handleDelete = (t: Task) => {
     setTasks((prev) => prev.filter((x) => x.id !== t.id));
     setOpenDropdown(null);
-    sendEmail(t.name, "Đã xóa", t.assignee);
-    showToast(`Đã xóa "${t.name}"`, () => {
+    sendStatusEmail(t.name, "Deleted", t.assignee);
+    showToast(`Deleted "${t.name}"`, () => {
       setTasks((prev) => [...prev, t]);
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
       setToast(null);
@@ -269,13 +354,28 @@ export default function Home() {
 
   const handleStatusChange = async (t: Task, status: Status) => {
     setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, status, updatedAt: nowISO() } : x)));
-    await sendEmail(t.name, STATUS_META[status].label, t.assignee);
+    await sendStatusEmail(t.name, STATUS_META[status].label, t.assignee);
+  };
+
+  /** Quick-reassign a task to the other person — the "swap" button on each card. */
+  const handleReassign = async (t: Task) => {
+    const nextAssignee = otherAssignee(t.assignee);
+    const updated: Task = { ...t, assignee: nextAssignee, assignedBy: currentUser, updatedAt: nowISO() };
+    setTasks((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+    setOpenDropdown(null);
+    const emailed = await notifyAssignment(updated, t.assignee);
+    showToast(
+      emailed
+        ? `Assigned "${t.name}" to ${nextAssignee} · email sent`
+        : `Assigned "${t.name}" to ${nextAssignee}`
+    );
   };
 
   const filteredTasks = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = tasks
       .filter((t) => (statusFilter === "all" ? true : t.status === statusFilter))
+      .filter((t) => (onlyMine ? t.assignee === currentUser : true))
       .filter((t) => !q || t.name.toLowerCase().includes(q) || t.assignee.toLowerCase().includes(q));
     const byStatus = (a: Task, b: Task) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status);
     switch (sortKey) {
@@ -284,7 +384,7 @@ export default function Home() {
       case "assignee": return list.sort((a, b) => a.assignee.localeCompare(b.assignee));
       default: return list.sort((a, b) => a.date.localeCompare(b.date));
     }
-  }, [tasks, statusFilter, query, sortKey]);
+  }, [tasks, statusFilter, onlyMine, currentUser, query, sortKey]);
 
   const stats = useMemo(() => {
     const total = tasks.length;
@@ -292,8 +392,9 @@ export default function Home() {
     const inProgress = tasks.filter((t) => t.status === "in-progress").length;
     const todo = tasks.filter((t) => t.status === "todo").length;
     const pct = total ? Math.round((done / total) * 100) : 0;
-    return { total, done, inProgress, todo, pct };
-  }, [tasks]);
+    const mine = tasks.filter((t) => t.assignee === currentUser).length;
+    return { total, done, inProgress, todo, pct, mine };
+  }, [tasks, currentUser]);
 
   const navItem = (id: ViewMode, label: string, IconCmp: any) => (
     <button
@@ -310,24 +411,42 @@ export default function Home() {
   );
 
   if (!hydrated) {
-    return <div className="min-h-screen bg-white grid place-items-center text-slate-400 text-sm">Đang tải dữ liệu...</div>;
+    return <div className="min-h-screen bg-white grid place-items-center text-slate-400 text-sm">Loading data...</div>;
   }
 
   return (
     <div className="flex min-h-screen bg-white text-slate-800 font-sans">
       {/* Sidebar */}
       <aside className="hidden md:flex md:flex-col w-60 shrink-0 bg-white border-r border-slate-200 p-5">
-        <div className="mb-8 pb-4 border-b border-slate-200">
-          <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase">Đồ án tốt nghiệp</p>
+        <div className="mb-6 pb-4 border-b border-slate-200">
+          <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase">Undergraduate Thesis</p>
           <h1 className="text-lg font-bold text-slate-900 font-mono">thesis<span className="text-[#D96B1F]">/</span>tracker</h1>
+          <p className="text-[11px] text-slate-400 mt-2 leading-snug line-clamp-3" title={THESIS_TITLE}>
+            {THESIS_TITLE}
+          </p>
         </div>
+
+        {/* Current user — decides who "you" are and who "the other person" is when assigning */}
+        <div className="mb-6 pb-4 border-b border-slate-200">
+          <label className="block">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide mb-1.5 block">You are</span>
+            <select
+              value={currentUser}
+              onChange={(e) => setCurrentUser(e.target.value)}
+              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-800 focus:outline-none focus:border-[#D96B1F]"
+            >
+              {ASSIGNEES.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </label>
+        </div>
+
         <nav className="space-y-1">
           {navItem("dashboard", "Dashboard", Icon.Dashboard)}
           {navItem("kanban", "Kanban", Icon.Kanban)}
-          {navItem("docs", "Tài liệu", Icon.Docs)}
+          {navItem("docs", "Docs", Icon.Docs)}
         </nav>
         <div className="mt-auto pt-4 border-t border-slate-200 font-mono text-[11px] text-slate-400">
-          {tasks.length} công việc · lưu cục bộ trên trình duyệt
+          {tasks.length} tasks · {stats.mine} yours · saved locally in browser
         </div>
       </aside>
 
@@ -344,20 +463,32 @@ export default function Home() {
       </nav>
 
       <main className="flex-1 p-5 md:p-10 pb-24 md:pb-10">
-        <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
+        <div className="flex flex-wrap items-end justify-between gap-4 mb-2">
           <div>
             <p className="font-mono text-xs text-slate-400 uppercase tracking-wider mb-1">
-              {view === "dashboard" ? "Tổng quan" : view === "kanban" ? "Bảng công việc" : "Kho tài liệu"}
+              {view === "dashboard" ? "Overview" : view === "kanban" ? "Task Board" : "Document Library"}
             </p>
-            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">Quản lý tiến độ khóa luận</h2>
+            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">Thesis Progress Tracker</h2>
           </div>
-          <button
-            onClick={() => setFormOpen(true)}
-            className="flex items-center gap-2 bg-[#D96B1F] text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-[#c25f1a] transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D96B1F]"
-          >
-            <Icon.Plus className="w-4 h-4" /> Thêm công việc
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Role selector on mobile (sidebar is hidden) */}
+            <select
+              value={currentUser}
+              onChange={(e) => setCurrentUser(e.target.value)}
+              className="md:hidden bg-white border border-slate-200 rounded-lg px-2.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-[#D96B1F]"
+            >
+              {ASSIGNEES.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <button
+              onClick={() => setFormOpen(true)}
+              className="flex items-center gap-2 bg-[#D96B1F] text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-[#c25f1a] transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D96B1F]"
+            >
+              <Icon.Plus className="w-4 h-4" /> Add Task
+            </button>
+          </div>
         </div>
+
+        <p className="text-sm text-slate-500 italic mb-6 max-w-2xl">{THESIS_TITLE}</p>
 
         {/* Stats hero */}
         <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 mb-8">
@@ -371,15 +502,15 @@ export default function Home() {
               </div>
             </div>
             <div>
-              <p className="text-sm text-slate-600">Tiến độ hoàn thành</p>
-              <p className="font-mono text-xs text-slate-400">{stats.done}/{stats.total} công việc đã xong</p>
+              <p className="text-sm text-slate-600">Completion Progress</p>
+              <p className="font-mono text-xs text-slate-400">{stats.done}/{stats.total} tasks completed</p>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">
             {([
-              ["Chưa bắt đầu", stats.todo, "text-slate-700"],
-              ["Đang thực hiện", stats.inProgress, "text-amber-600"],
-              ["Hoàn thành", stats.done, "text-emerald-600"],
+              ["Not Started", stats.todo, "text-slate-700"],
+              ["In Progress", stats.inProgress, "text-amber-600"],
+              ["Completed", stats.done, "text-emerald-600"],
             ] as const).map(([label, val, cls]) => (
               <div key={label} className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between shadow-sm">
                 <span className="text-xs text-slate-500">{label}</span>
@@ -396,7 +527,7 @@ export default function Home() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Tìm công việc hoặc người làm..."
+              placeholder="Search tasks or assignee..."
               className="w-full bg-white border border-slate-200 rounded-lg pl-9 pr-3 py-2.5 text-sm placeholder:text-slate-400 focus:outline-none focus:border-[#D96B1F] focus:ring-2 focus:ring-[#D96B1F]/15"
             />
           </div>
@@ -405,7 +536,7 @@ export default function Home() {
             onChange={(e) => setStatusFilter(e.target.value as Status | "all")}
             className="bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:border-[#D96B1F]"
           >
-            <option value="all">Tất cả trạng thái</option>
+            <option value="all">All statuses</option>
             {STATUS_ORDER.map((s) => (
               <option key={s} value={s}>{STATUS_META[s].label}</option>
             ))}
@@ -419,6 +550,14 @@ export default function Home() {
               <option key={k} value={k}>{SORT_LABEL[k]}</option>
             ))}
           </select>
+          <button
+            onClick={() => setOnlyMine((v) => !v)}
+            className={`px-3 py-2.5 rounded-lg text-sm font-medium border transition ${
+              onlyMine ? "bg-[#FDF1E7] border-[#D96B1F] text-[#B85A17]" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            Only mine
+          </button>
         </div>
 
         {/* Dashboard: git-log style list */}
@@ -433,7 +572,9 @@ export default function Home() {
                     key={t.id}
                     className={`flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group ${
                       i === 0 ? "rounded-t-2xl" : ""
-                    } ${i === filteredTasks.length - 1 ? "rounded-b-2xl" : ""}`}
+                    } ${i === filteredTasks.length - 1 ? "rounded-b-2xl" : ""} ${
+                      t.assignee === currentUser ? "bg-[#FFFBF6]" : ""
+                    }`}
                   >
                     <div className="relative w-4 shrink-0 flex justify-center">
                       {i !== 0 && <span className="absolute top-0 h-1/2 w-px bg-slate-200" />}
@@ -441,27 +582,42 @@ export default function Home() {
                       <span className={`relative mt-4 w-2.5 h-2.5 rounded-full ring-4 ring-white ${STATUS_META[t.status].dot}`} />
                     </div>
                     <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[90px_1fr_auto_auto] gap-x-4 gap-y-1 items-center">
-                      <span className="font-mono text-xs text-slate-400" title={`Cập nhật: ${new Date(t.updatedAt).toLocaleString("vi-VN")}`}>{t.date}</span>
+                      <span className="font-mono text-xs text-slate-400" title={`Updated: ${new Date(t.updatedAt).toLocaleString("en-US")}`}>{t.date}</span>
                       <span className="font-semibold text-slate-900 truncate">{t.name}</span>
-                      <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600 w-fit">{t.assignee}</span>
+                      <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600 w-fit flex items-center gap-1">
+                        {t.assignee}
+                        {t.assignee === currentUser && <span className="text-[#D96B1F] font-semibold">· you</span>}
+                      </span>
                       <span className={`text-xs border px-2.5 py-1 rounded-full w-fit ${STATUS_META[t.status].badge}`}>{STATUS_META[t.status].label}</span>
-                      {t.location && <span className="md:col-span-4 text-xs text-slate-400 font-mono truncate">↳ {t.location}</span>}
+                      <span className="md:col-span-4 text-[11px] text-slate-400 font-mono truncate">
+                        {t.location && <>↳ {t.location} · </>}Assigned by {t.assignedBy}
+                      </span>
                     </div>
-                    <div className="relative shrink-0" ref={openDropdown === t.id ? menuRef : undefined}>
+                    <div className="relative shrink-0 flex items-center gap-1" ref={openDropdown === t.id ? menuRef : undefined}>
+                      <button
+                        onClick={() => handleReassign(t)}
+                        title={`Reassign this task to ${otherAssignee(t.assignee)} and send an email`}
+                        className="text-slate-400 hover:text-[#D96B1F] p-1.5 rounded-md hover:bg-[#FDF1E7] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+                      >
+                        <Icon.Swap className="w-4 h-4" />
+                      </button>
                       <button
                         onClick={() => setOpenDropdown(openDropdown === t.id ? null : t.id)}
                         className="text-slate-400 hover:text-slate-900 p-1.5 rounded-md hover:bg-slate-100 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
-                        aria-label="Thao tác"
+                        aria-label="Actions"
                       >
                         <Icon.Dots className="w-4 h-4" />
                       </button>
                       {openDropdown === t.id && (
-                        <div className="absolute right-0 top-9 bg-white border border-slate-200 shadow-lg rounded-lg z-10 w-36 py-1.5 text-sm">
+                        <div className="absolute right-0 top-9 bg-white border border-slate-200 shadow-lg rounded-lg z-10 w-44 py-1.5 text-sm">
                           <button onClick={() => handleEdit(t)} className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-700">
-                            <Icon.Pencil className="w-3.5 h-3.5" /> Sửa
+                            <Icon.Pencil className="w-3.5 h-3.5" /> Edit
+                          </button>
+                          <button onClick={() => handleReassign(t)} className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-[#FDF1E7] text-slate-700">
+                            <Icon.Mail className="w-3.5 h-3.5" /> Assign to {otherAssignee(t.assignee)}
                           </button>
                           <button onClick={() => handleDelete(t)} className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-red-50 text-red-600">
-                            <Icon.Trash className="w-3.5 h-3.5" /> Xóa
+                            <Icon.Trash className="w-3.5 h-3.5" /> Delete
                           </button>
                         </div>
                       )}
@@ -486,27 +642,30 @@ export default function Home() {
                     <span className="ml-auto font-mono text-xs text-slate-400">{items.length}</span>
                   </div>
                   <div className="space-y-3 min-h-[60px]">
-                    {items.length === 0 && <p className="text-xs text-slate-400 italic px-1">Không có công việc</p>}
+                    {items.length === 0 && <p className="text-xs text-slate-400 italic px-1">No tasks</p>}
                     {items.map((t) => {
                       const idx = STATUS_ORDER.indexOf(status);
                       const prev = STATUS_ORDER[idx - 1];
                       const next = STATUS_ORDER[idx + 1];
                       return (
-                        <div key={t.id} className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+                        <div key={t.id} className={`bg-white border rounded-xl p-3 shadow-sm ${t.assignee === currentUser ? "border-[#F0C39A]" : "border-slate-200"}`}>
                           <p className="text-sm font-medium text-slate-900 mb-1.5">{t.name}</p>
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] font-mono text-slate-400">{t.date} · {t.assignee}</span>
                             <div className="flex items-center gap-1">
                               {prev && (
-                                <button onClick={() => handleStatusChange(t, prev)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Chuyển về ${STATUS_META[prev].label}`}>
+                                <button onClick={() => handleStatusChange(t, prev)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Move back to ${STATUS_META[prev].label}`}>
                                   <Icon.ArrowLeft className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              <button onClick={() => handleEdit(t)} className="p-1 text-slate-400 hover:text-slate-700" aria-label="Sửa">
+                              <button onClick={() => handleReassign(t)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Assign to ${otherAssignee(t.assignee)}`} title={`Assign to ${otherAssignee(t.assignee)}`}>
+                                <Icon.Swap className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => handleEdit(t)} className="p-1 text-slate-400 hover:text-slate-700" aria-label="Edit">
                                 <Icon.Pencil className="w-3.5 h-3.5" />
                               </button>
                               {next && (
-                                <button onClick={() => handleStatusChange(t, next)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Chuyển sang ${STATUS_META[next].label}`}>
+                                <button onClick={() => handleStatusChange(t, next)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Move forward to ${STATUS_META[next].label}`}>
                                   <Icon.ArrowRight className="w-3.5 h-3.5" />
                                 </button>
                               )}
@@ -522,11 +681,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* Tài liệu */}
+        {/* Docs */}
         {view === "docs" && (
           <div className="bg-white border border-slate-200 rounded-2xl divide-y divide-slate-100 shadow-sm">
             {filteredTasks.filter((t) => t.location).length === 0 ? (
-              <p className="p-8 text-center text-sm text-slate-400">Chưa có tài liệu nào được liên kết.</p>
+              <p className="p-8 text-center text-sm text-slate-400">No documents linked yet.</p>
             ) : (
               filteredTasks
                 .filter((t) => t.location)
@@ -555,51 +714,57 @@ export default function Home() {
             className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6"
           >
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold text-slate-900">{editingId ? "Chỉnh sửa công việc" : "Thêm công việc mới"}</h3>
-              <button type="button" onClick={resetForm} className="text-slate-400 hover:text-slate-700" aria-label="Đóng">
+              <h3 className="font-semibold text-slate-900">{editingId ? "Edit Task" : "Add New Task"}</h3>
+              <button type="button" onClick={resetForm} className="text-slate-400 hover:text-slate-700" aria-label="Close">
                 <Icon.X className="w-4 h-4" />
               </button>
             </div>
             <div className="space-y-4">
-              <Field label="Tên công việc" error={errors.name}>
+              <Field label="Task name" error={errors.name}>
                 <input
                   autoFocus
                   name="name"
                   value={formData.name}
                   onChange={handleInputChange}
-                  placeholder="Nhập tên công việc..."
+                  placeholder="Enter task name..."
                   className={`input ${errors.name ? "input-error" : ""}`}
                 />
               </Field>
               <div className="grid grid-cols-2 gap-4">
-                <Field label="Ngày" error={errors.date}>
+                <Field label="Date" error={errors.date}>
                   <input type="date" name="date" value={formData.date} onChange={handleInputChange} className={`input ${errors.date ? "input-error" : ""}`} />
                 </Field>
-                <Field label="Người làm">
+                <Field label="Assignee">
                   <select name="assignee" value={formData.assignee} onChange={handleInputChange} className="input">
                     {ASSIGNEES.map((a) => <option key={a}>{a}</option>)}
                   </select>
                 </Field>
               </div>
-              <Field label="Trạng thái">
+              {formData.assignee !== currentUser && (
+                <p className="flex items-center gap-1.5 text-xs text-[#B85A17] bg-[#FDF1E7] border border-[#F0C39A] rounded-lg px-3 py-2">
+                  <Icon.Mail className="w-3.5 h-3.5 shrink-0" />
+                  When you save, the system will email {formData.assignee} to let them know you just assigned this task to them.
+                </p>
+              )}
+              <Field label="Status">
                 <select name="status" value={formData.status} onChange={handleInputChange} className="input">
                   {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
                 </select>
               </Field>
-              <Field label="Nơi lưu trữ">
+              <Field label="Storage location">
                 <input name="location" value={formData.location} onChange={handleInputChange} placeholder="Link/Folder..." className="input" />
               </Field>
             </div>
             <div className="flex gap-3 mt-6">
               <button type="button" onClick={resetForm} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium">
-                Hủy
+                Cancel
               </button>
               <button
                 type="submit"
                 disabled={submitting}
                 className="flex-1 py-2.5 rounded-lg bg-[#D96B1F] text-white font-semibold hover:bg-[#c25f1a] disabled:opacity-60 text-sm"
               >
-                {submitting ? "Đang lưu..." : editingId ? "Lưu thay đổi" : "Thêm mới"}
+                {submitting ? "Saving..." : editingId ? "Save Changes" : "Add Task"}
               </button>
             </div>
           </form>
@@ -608,14 +773,14 @@ export default function Home() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-sm pl-4 pr-2 py-3 rounded-xl shadow-2xl flex items-center gap-3">
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-sm pl-4 pr-2 py-3 rounded-xl shadow-2xl flex items-center gap-3 max-w-sm">
           <span className="font-mono">{toast.message}</span>
           {toast.onUndo && (
             <button
               onClick={toast.onUndo}
-              className="flex items-center gap-1 text-[#F4A662] hover:text-[#ffb877] font-medium px-2 py-1 rounded-md hover:bg-white/10"
+              className="flex items-center gap-1 text-[#F4A662] hover:text-[#ffb877] font-medium px-2 py-1 rounded-md hover:bg-white/10 shrink-0"
             >
-              <Icon.Undo className="w-3.5 h-3.5" /> Hoàn tác
+              <Icon.Undo className="w-3.5 h-3.5" /> Undo
             </button>
           )}
         </div>
@@ -660,10 +825,10 @@ function Field({ label, error, children }: { label: string; error?: string; chil
 function EmptyState({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="py-16 text-center">
-      <p className="font-mono text-sm text-slate-400 mb-1">// chưa có commit nào</p>
-      <p className="text-slate-500 mb-5">Chưa có công việc phù hợp với bộ lọc hiện tại.</p>
+      <p className="font-mono text-sm text-slate-400 mb-1">// no commits yet</p>
+      <p className="text-slate-500 mb-5">No tasks match the current filters.</p>
       <button onClick={onAdd} className="text-sm font-medium text-[#D96B1F] hover:underline">
-        + Thêm công việc đầu tiên
+        + Add your first task
       </button>
     </div>
   );

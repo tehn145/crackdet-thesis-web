@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     });
 
     const mailOptions = {
-      from: `"Thesis Tracker" <${process.env.EMAIL_USER}>`,
+      from: `"Crack Detection" <${process.env.EMAIL_USER}>`,
       to: ['ngokimthanh1455@gmail.com', 'trancongthanh040205@gmail.com'], 
       subject: `[Tiến độ KLTN] ${taskName} -> ${newStatus}`,
       html: `
