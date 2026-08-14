@@ -17,11 +17,38 @@ interface Task {
   location: string;
   status: Status;
   updatedAt: string;
+  estimatedDays?: number; // estimated days to finish, entered by the user
+  deadline?: string; // ISO datetime, auto-computed from date + estimatedDays
+  deadlineWarnedAt?: string; // ISO datetime we last sent the <6h warning email, to avoid duplicates
 }
+
+/** Form-only shape: estimatedDays is kept as a raw string while typing. */
+type TaskFormData = {
+  date: string;
+  name: string;
+  description: string;
+  assignee: string;
+  location: string;
+  status: Status;
+  estimatedDays: string;
+};
+
+type DeadlineLevel = "none" | "done" | "safe" | "warning" | "urgent" | "overdue";
+
+/** Global project deadlines — thesis / report / paper. */
+type DeadlineKey = "thesis" | "report" | "paper";
+type ProjectDeadlines = Partial<Record<DeadlineKey, string>>; // ISO datetime per key
+
+const DEADLINE_LABELS: Record<DeadlineKey, string> = {
+  thesis: "Khóa luận",
+  report: "Báo cáo",
+  paper: "Bài báo",
+};
 
 const STORAGE_KEY = "thesis-tracker:tasks";
 const CURRENT_USER_KEY = "thesis-tracker:current-user";
 const UNLOCKED_KEY = "thesis-tracker:unlocked";
+const DEADLINES_KEY = "thesis-tracker:deadlines";
 const ASSIGNEES = ["Kim Thanh", "Cong Thanh"];
 
 const THESIS_TITLE = "Deep Learning-Based Surface Damage Detection and Classification for Civil Infrastructure";
@@ -52,6 +79,62 @@ const SORT_LABEL: Record<SortKey, string> = {
 const nowISO = () => new Date().toISOString();
 
 const otherAssignee = (name: string) => ASSIGNEES.find((a) => a !== name) ?? ASSIGNEES[0];
+
+/** date (YYYY-MM-DD) + N days -> ISO deadline at end of that day (23:59:59). */
+const computeDeadline = (dateStr: string, days: number): string => {
+  const base = new Date(`${dateStr}T00:00:00`);
+  base.setDate(base.getDate() + days);
+  base.setHours(23, 59, 59, 999);
+  return base.toISOString();
+};
+
+/** Human-readable "X ngày Y giờ" / "X giờ Y phút" / "X phút", ignoring sign. */
+const formatDuration = (ms: number): string => {
+  const totalMinutes = Math.max(0, Math.floor(Math.abs(ms) / 60000));
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days} ngày ${hours} giờ`;
+  if (hours > 0) return `${hours} giờ ${minutes} phút`;
+  return `${minutes} phút`;
+};
+
+const DEADLINE_LEVEL_STYLE: Record<DeadlineLevel, string> = {
+  none: "bg-slate-50 text-slate-400 border-slate-200",
+  done: "bg-emerald-50 text-emerald-600 border-emerald-200",
+  safe: "bg-slate-100 text-slate-600 border-slate-200",
+  warning: "bg-amber-50 text-amber-700 border-amber-300",
+  urgent: "bg-red-50 text-red-700 border-red-300 animate-pulse",
+  overdue: "bg-red-100 text-red-800 border-red-400",
+};
+
+/** Deadline badge info for a single task, given the current time. */
+const getTaskDeadlineInfo = (t: Task, now: number): { level: DeadlineLevel; text: string } => {
+  if (t.status === "done") return { level: "done", text: "Đã hoàn thành" };
+  if (!t.deadline) return { level: "none", text: "Chưa đặt" };
+  const diff = new Date(t.deadline).getTime() - now;
+  if (diff <= 0) return { level: "overdue", text: `Quá hạn ${formatDuration(diff)}` };
+  if (diff <= 6 * 60 * 60 * 1000) return { level: "urgent", text: `Còn ${formatDuration(diff)}` };
+  if (diff <= 24 * 60 * 60 * 1000) return { level: "warning", text: `Còn ${formatDuration(diff)}` };
+  return { level: "safe", text: `Còn ${formatDuration(diff)}` };
+};
+
+/** Urgency level for a raw ms-diff (used for the project deadline box). */
+const getDiffLevel = (diff: number): DeadlineLevel => {
+  if (diff <= 0) return "overdue";
+  if (diff <= 6 * 60 * 60 * 1000) return "urgent";
+  if (diff <= 24 * 60 * 60 * 1000) return "warning";
+  return "safe";
+};
+
+const toDatetimeLocal = (iso?: string): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const fromDatetimeLocal = (value: string): string | undefined => (value ? new Date(value).toISOString() : undefined);
 
 /** Reads the unlock session from sessionStorage (auto-clears on tab close) and checks 24h expiry. */
 const readUnlockSession = (): boolean => {
@@ -85,13 +168,14 @@ const seedTasks = (): Task[] => [
   },
 ];
 
-const emptyForm = (currentUser: string): Omit<Task, "id" | "updatedAt" | "assignedBy"> => ({
+const emptyForm = (currentUser: string): TaskFormData => ({
   date: new Date().toISOString().split("T")[0],
   name: "",
   description: "",
   assignee: currentUser,
   location: "",
   status: "todo",
+  estimatedDays: "",
 });
 
 /* --------------------------------- Icons --------------------------------- */
@@ -195,8 +279,12 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [view, setView] = useState<ViewMode>("dashboard");
   const [currentUser, setCurrentUser] = useState<string>(ASSIGNEES[0]);
-  const [formData, setFormData] = useState<Omit<Task, "id" | "updatedAt" | "assignedBy">>(emptyForm(ASSIGNEES[0]));
+  const [formData, setFormData] = useState<TaskFormData>(emptyForm(ASSIGNEES[0]));
   const [errors, setErrors] = useState<{ name?: string; date?: string }>({});
+  const [deadlines, setDeadlines] = useState<ProjectDeadlines>({});
+  const [deadlineForm, setDeadlineForm] = useState<ProjectDeadlines>({});
+  const [deadlineModalOpen, setDeadlineModalOpen] = useState(false);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [editingId, setEditingId] = useState<number | null>(null);
   const [openDropdown, setOpenDropdown] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -218,6 +306,8 @@ export default function Home() {
       setCurrentUser(user);
       setFormData(emptyForm(user));
       setTasks(raw ? (JSON.parse(raw) as Task[]) : seedTasks());
+      const rawDeadlines = window.localStorage.getItem(DEADLINES_KEY);
+      setDeadlines(rawDeadlines ? (JSON.parse(rawDeadlines) as ProjectDeadlines) : {});
       // Unlock state lives in sessionStorage: it disappears when the tab is closed,
       // and it also carries a timestamp so it expires after SESSION_DURATION_MS.
       setUnlocked(readUnlockSession());
@@ -235,6 +325,21 @@ export default function Home() {
       /* storage unavailable — state still works in-memory */
     }
   }, [tasks, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(DEADLINES_KEY, JSON.stringify(deadlines));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [deadlines, hydrated]);
+
+  /* Keep all "time remaining" text live without needing user interaction. */
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 30 * 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -257,6 +362,29 @@ export default function Home() {
     }, SESSION_CHECK_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [unlocked]);
+
+  /* Deadline watcher: for any task under 6h to its deadline that hasn't been
+     warned about yet, fire a warning email once and mark it so it isn't resent. */
+  useEffect(() => {
+    if (!hydrated) return;
+    const checkDeadlines = () => {
+      const now = Date.now();
+      tasks.forEach((t) => {
+        if (!t.deadline || t.status === "done" || t.deadlineWarnedAt) return;
+        const diff = new Date(t.deadline).getTime() - now;
+        if (diff > 0 && diff <= 6 * 60 * 60 * 1000) {
+          sendDeadlineWarningEmail(t.name, t.deadline, t.assignee).then((ok) => {
+            if (ok) {
+              setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, deadlineWarnedAt: nowISO() } : x)));
+            }
+          });
+        }
+      });
+    };
+    checkDeadlines();
+    const id = window.setInterval(checkDeadlines, 5 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [tasks, hydrated]);
 
   /* Outside click closes the row menu */
   useEffect(() => {
@@ -327,6 +455,20 @@ export default function Home() {
     }
   };
 
+  /** Email sent once when a task drops under 6h to its deadline. Returns whether it sent OK. */
+  const sendDeadlineWarningEmail = async (taskName: string, deadline: string, assignee: string): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/update-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "deadline-warning", taskName, deadline, assignee }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
   /**
    * Assignment logic + email notification to the assignee.
    * Only sends when BOTH are true:
@@ -384,14 +526,31 @@ export default function Home() {
     e.preventDefault();
     if (!validate()) return;
     setSubmitting(true);
-    const cleaned = { ...formData, name: formData.name.trim(), description: formData.description.trim(), location: formData.location.trim() };
+
+    const estDaysTrim = formData.estimatedDays.trim();
+    const estDaysNum = estDaysTrim === "" ? NaN : Number(estDaysTrim);
+    const validEstDays = !Number.isNaN(estDaysNum) && estDaysNum > 0 ? estDaysNum : undefined;
+    const computedDeadline = validEstDays !== undefined ? computeDeadline(formData.date, validEstDays) : undefined;
+
+    const cleaned = {
+      date: formData.date,
+      name: formData.name.trim(),
+      description: formData.description.trim(),
+      location: formData.location.trim(),
+      assignee: formData.assignee,
+      status: formData.status,
+    };
     await new Promise((r) => setTimeout(r, 300));
 
     if (editingId) {
       const prevTask = tasks.find((t) => t.id === editingId);
+      const deadlineChanged = prevTask?.deadline !== computedDeadline;
       const updated: Task = {
         ...(prevTask as Task),
         ...cleaned,
+        estimatedDays: validEstDays,
+        deadline: computedDeadline,
+        deadlineWarnedAt: deadlineChanged ? undefined : prevTask?.deadlineWarnedAt,
         assignedBy: prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
         updatedAt: nowISO(),
       };
@@ -404,7 +563,14 @@ export default function Home() {
           : `Saved changes to "${cleaned.name}"`
       );
     } else {
-      const newTask: Task = { id: Date.now(), ...cleaned, assignedBy: currentUser, updatedAt: nowISO() };
+      const newTask: Task = {
+        id: Date.now(),
+        ...cleaned,
+        estimatedDays: validEstDays,
+        deadline: computedDeadline,
+        assignedBy: currentUser,
+        updatedAt: nowISO(),
+      };
       setTasks((prev) => [...prev, newTask]);
       await sendStatusEmail(cleaned.name, "Added", cleaned.assignee);
       const emailed = await notifyAssignment(newTask, undefined);
@@ -420,11 +586,47 @@ export default function Home() {
 
   const handleEdit = (t: Task) => {
     setEditingId(t.id);
-    setFormData({ date: t.date, name: t.name, description: t.description, assignee: t.assignee, location: t.location, status: t.status });
+    setFormData({
+      date: t.date,
+      name: t.name,
+      description: t.description,
+      assignee: t.assignee,
+      location: t.location,
+      status: t.status,
+      estimatedDays: t.estimatedDays !== undefined ? String(t.estimatedDays) : "",
+    });
     setErrors({});
     setOpenDropdown(null);
     setFormOpen(true);
   };
+
+  /** Live preview of the computed deadline shown under the "estimated days" field. */
+  const estimatedDeadlinePreview = useMemo(() => {
+    const trimmed = formData.estimatedDays.trim();
+    if (!trimmed || !formData.date) return null;
+    const n = Number(trimmed);
+    if (Number.isNaN(n) || n <= 0) return null;
+    const iso = computeDeadline(formData.date, n);
+    return new Date(iso).toLocaleString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }, [formData.date, formData.estimatedDays]);
+
+  /** Nearest upcoming (or, if all passed, most recently overdue) project deadline. */
+  const nearestDeadline = useMemo(() => {
+    const entries = (Object.keys(DEADLINE_LABELS) as DeadlineKey[])
+      .map((key) => ({ key, iso: deadlines[key] }))
+      .filter((e): e is { key: DeadlineKey; iso: string } => Boolean(e.iso))
+      .map((e) => ({ key: e.key, iso: e.iso, diff: new Date(e.iso).getTime() - nowTick }));
+    if (entries.length === 0) return null;
+    const upcoming = entries.filter((e) => e.diff > 0).sort((a, b) => a.diff - b.diff);
+    if (upcoming.length > 0) return upcoming[0];
+    return entries.sort((a, b) => b.diff - a.diff)[0];
+  }, [deadlines, nowTick]);
 
   const handleDelete = (t: Task) => {
     setTasks((prev) => prev.filter((x) => x.id !== t.id));
@@ -620,11 +822,26 @@ export default function Home() {
             >
               <Icon.Lock className="w-4 h-4" />
             </button>
+            {/* Global deadline countdown — click to set/edit thesis, report, paper deadlines */}
             <button
-              onClick={() => setFormOpen(true)}
-              className="flex items-center gap-2 bg-[#D96B1F] text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-[#c25f1a] transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D96B1F]"
+              type="button"
+              onClick={() => {
+                setDeadlineForm(deadlines);
+                setDeadlineModalOpen(true);
+              }}
+              className={`flex flex-col justify-center min-w-[190px] px-4 py-2 rounded-lg border text-left transition hover:border-[#D96B1F] ${
+                nearestDeadline ? DEADLINE_LEVEL_STYLE[getDiffLevel(nearestDeadline.diff)] : "bg-white border-slate-200 text-slate-400"
+              }`}
             >
-              <Icon.Plus className="w-4 h-4" /> Add Task
+              <span className="text-[10px] font-mono uppercase tracking-wide opacity-70">Deadline</span>
+              {nearestDeadline ? (
+                <span className="text-sm font-semibold leading-tight">
+                  {DEADLINE_LABELS[nearestDeadline.key]} ·{" "}
+                  {nearestDeadline.diff <= 0 ? `Quá hạn ${formatDuration(nearestDeadline.diff)}` : `Còn ${formatDuration(nearestDeadline.diff)}`}
+                </span>
+              ) : (
+                <span className="text-sm font-medium">+ Thêm deadline</span>
+              )}
             </button>
           </div>
         </div>
@@ -708,7 +925,9 @@ export default function Home() {
               <EmptyState onAdd={() => setFormOpen(true)} />
             ) : (
               <ul className="divide-y divide-slate-100">
-                {filteredTasks.map((t, i) => (
+                {filteredTasks.map((t, i) => {
+                  const deadlineInfo = getTaskDeadlineInfo(t, nowTick);
+                  return (
                   <li
                     key={t.id}
                     className={`flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group ${
@@ -722,7 +941,7 @@ export default function Home() {
                       {i !== filteredTasks.length - 1 && <span className="absolute bottom-0 h-1/2 w-px bg-slate-200" />}
                       <span className={`relative mt-4 w-2.5 h-2.5 rounded-full ring-4 ring-white ${STATUS_META[t.status].dot}`} />
                     </div>
-                    <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[90px_1fr_auto_auto] gap-x-4 gap-y-1 items-center">
+                    <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[90px_1fr_auto_auto_auto] gap-x-4 gap-y-1 items-center">
                       <span className="font-mono text-xs text-slate-400" title={`Updated: ${new Date(t.updatedAt).toLocaleString("en-US")}`}>{t.date}</span>
                       <span className="font-semibold text-slate-900 truncate">{t.name}</span>
                       <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600 w-fit flex items-center gap-1">
@@ -730,7 +949,8 @@ export default function Home() {
                         {t.assignee === currentUser && <span className="text-[#D96B1F] font-semibold">· you</span>}
                       </span>
                       <span className={`text-xs border px-2.5 py-1 rounded-full w-fit ${STATUS_META[t.status].badge}`}>{STATUS_META[t.status].label}</span>
-                      <span className="md:col-span-4 text-[11px] text-slate-400 font-mono truncate">
+                      <span className={`text-xs border px-2.5 py-1 rounded-full w-fit ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}>{deadlineInfo.text}</span>
+                      <span className="md:col-span-5 text-[11px] text-slate-400 font-mono truncate">
                         {t.location && <>↳ {t.location} · </>}Assigned by {t.assignedBy}
                       </span>
                     </div>
@@ -764,7 +984,8 @@ export default function Home() {
                       )}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -788,9 +1009,15 @@ export default function Home() {
                       const idx = STATUS_ORDER.indexOf(status);
                       const prev = STATUS_ORDER[idx - 1];
                       const next = STATUS_ORDER[idx + 1];
+                      const deadlineInfo = getTaskDeadlineInfo(t, nowTick);
                       return (
                         <div key={t.id} className={`bg-white border rounded-xl p-3 shadow-sm ${t.assignee === currentUser ? "border-[#F0C39A]" : "border-slate-200"}`}>
                           <p className="text-sm font-medium text-slate-900 mb-1.5">{t.name}</p>
+                          {deadlineInfo.level !== "none" && (
+                            <span className={`inline-block text-[10px] border px-2 py-0.5 rounded-full mb-1.5 ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}>
+                              {deadlineInfo.text}
+                            </span>
+                          )}
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] font-mono text-slate-400">{t.date} · {t.assignee}</span>
                             <div className="flex items-center gap-1">
@@ -843,7 +1070,64 @@ export default function Home() {
             )}
           </div>
         )}
+
+        {/* Add task — placed below the list/board so it doesn't compete with the header */}
+        <div className="mt-6 flex justify-center">
+          <button
+            onClick={() => setFormOpen(true)}
+            className="flex items-center gap-2 bg-[#D96B1F] text-white font-semibold px-5 py-2.5 rounded-lg hover:bg-[#c25f1a] transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D96B1F]"
+          >
+            <Icon.Plus className="w-4 h-4" /> Add Task
+          </button>
+        </div>
       </main>
+
+      {/* Global deadline modal — thesis / report / paper */}
+      {deadlineModalOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setDeadlineModalOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-semibold text-slate-900">Deadline chung</h3>
+              <button type="button" onClick={() => setDeadlineModalOpen(false)} className="text-slate-400 hover:text-slate-700" aria-label="Close">
+                <Icon.X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              {(Object.keys(DEADLINE_LABELS) as DeadlineKey[]).map((key) => (
+                <Field key={key} label={DEADLINE_LABELS[key]}>
+                  <input
+                    type="datetime-local"
+                    value={toDatetimeLocal(deadlineForm[key])}
+                    onChange={(e) =>
+                      setDeadlineForm((prev) => ({ ...prev, [key]: fromDatetimeLocal(e.target.value) }))
+                    }
+                    className="input"
+                  />
+                </Field>
+              ))}
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setDeadlineModalOpen(false)}
+                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeadlines(deadlineForm);
+                  setDeadlineModalOpen(false);
+                }}
+                className="flex-1 py-2.5 rounded-lg bg-[#D96B1F] text-white font-semibold hover:bg-[#c25f1a] text-sm"
+              >
+                Lưu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add/Edit form modal */}
       {formOpen && (
@@ -891,6 +1175,23 @@ export default function Home() {
                   </select>
                 </Field>
               </div>
+              <Field label="Số ngày dự kiến hoàn thành">
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  name="estimatedDays"
+                  value={formData.estimatedDays}
+                  onChange={handleInputChange}
+                  placeholder="Ví dụ: 5"
+                  className="input"
+                />
+              </Field>
+              {estimatedDeadlinePreview && (
+                <p className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                  Deadline dự kiến: <span className="font-semibold text-slate-800">{estimatedDeadlinePreview}</span>
+                </p>
+              )}
               {formData.assignee !== currentUser && (
                 <p className="flex items-center gap-1.5 text-xs text-[#B85A17] bg-[#FDF1E7] border border-[#F0C39A] rounded-lg px-3 py-2">
                   <Icon.Mail className="w-3.5 h-3.5 shrink-0" />
