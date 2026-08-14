@@ -15,7 +15,7 @@ export async function POST(request: Request) {
 
     const mailOptions = {
       from: `"Thesis Tracker" <${process.env.EMAIL_USER}>`,
-      to: ['ngokimthanh1455@gmail.com', 'trancongthanh040205@gmail.com', '23521447@gm.uit.edu.vn'],
+      to: ['ngokimthanh1455@gmail.com', 'trancongthanh040205@gmail.com'], 
       subject: `[Tiến độ] ${taskName} -> ${newStatus}`,
       html: `
         <h2>Cập nhật tiến độ khóa luận!</h2>
