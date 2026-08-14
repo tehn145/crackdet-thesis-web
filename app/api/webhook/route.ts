@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const mailOptions = {
       from: `"Thesis Tracker" <${process.env.EMAIL_USER}>`,
       to: ['ngokimthanh1455@gmail.com', 'trancongthanh040205@gmail.com'],
-      subject: `[Khóa luận] Cập nhật mới trên ${repoName}`,
+      subject: `[Tiến độ Github] Cập nhật mới trên ${repoName}`,
       html: `
         <h2>${pusherName} vừa đẩy code mới lên GitHub!</h2>
         <p><strong>Nội dung các thay đổi:</strong></p>

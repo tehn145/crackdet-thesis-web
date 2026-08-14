@@ -18,7 +18,7 @@ interface Task {
 }
 
 const STORAGE_KEY = "thesis-tracker:tasks";
-const ASSIGNEES = ["Thành", "Bạn chung nhóm"];
+const ASSIGNEES = ["Kim Thành", "Công Thành"];
 
 const STATUS_META: Record<Status, { label: string; badge: string; dot: string }> = {
   todo: { label: "Chưa bắt đầu", badge: "bg-slate-100 text-slate-600 border-slate-300", dot: "bg-slate-400" },
