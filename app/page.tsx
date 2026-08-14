@@ -483,7 +483,7 @@ export default function Home() {
                 setAccessCode(e.target.value);
                 setAccessError("");
               }}
-              placeholder="Enter your Secret Code..."
+              placeholder="Enter your Password..."
               className={`input text-center tracking-widest ${accessError ? "input-error" : ""}`}
             />
             {accessError && <span className="text-xs text-red-600 mt-1.5 block">{accessError}</span>}
