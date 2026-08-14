@@ -29,6 +29,11 @@ const THESIS_TITLE = "Deep Learning-Based Surface Damage Detection and Classific
 /** Access codes allowed to unlock the tracker (student IDs). */
 const VALID_ACCESS_CODES = ["23521447", "23521463"];
 
+/** Unlock session lifetime — after this, the tracker auto-locks even if the tab stays open. */
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 1 day
+/** How often to check whether the session has expired while the tab is open. */
+const SESSION_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
+
 const STATUS_META: Record<Status, { label: string; badge: string; dot: string }> = {
   todo: { label: "Not Started", badge: "bg-slate-100 text-slate-600 border-slate-300", dot: "bg-slate-400" },
   "in-progress": { label: "In Progress", badge: "bg-amber-50 text-amber-700 border-amber-300", dot: "bg-amber-500" },
@@ -47,6 +52,24 @@ const SORT_LABEL: Record<SortKey, string> = {
 const nowISO = () => new Date().toISOString();
 
 const otherAssignee = (name: string) => ASSIGNEES.find((a) => a !== name) ?? ASSIGNEES[0];
+
+/** Reads the unlock session from sessionStorage (auto-clears on tab close) and checks 24h expiry. */
+const readUnlockSession = (): boolean => {
+  try {
+    const raw = window.sessionStorage.getItem(UNLOCKED_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { unlockedAt: number };
+    if (!parsed?.unlockedAt) return false;
+    const expired = Date.now() - parsed.unlockedAt > SESSION_DURATION_MS;
+    if (expired) {
+      window.sessionStorage.removeItem(UNLOCKED_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const seedTasks = (): Task[] => [
   {
@@ -195,7 +218,9 @@ export default function Home() {
       setCurrentUser(user);
       setFormData(emptyForm(user));
       setTasks(raw ? (JSON.parse(raw) as Task[]) : seedTasks());
-      setUnlocked(window.localStorage.getItem(UNLOCKED_KEY) === "true");
+      // Unlock state lives in sessionStorage: it disappears when the tab is closed,
+      // and it also carries a timestamp so it expires after SESSION_DURATION_MS.
+      setUnlocked(readUnlockSession());
     } catch {
       setTasks(seedTasks());
     }
@@ -219,6 +244,19 @@ export default function Home() {
       /* storage unavailable */
     }
   }, [currentUser, hydrated]);
+
+  /* While unlocked, periodically check whether the 24h session has expired
+     (covers the case where the tab is simply left open, not closed). */
+  useEffect(() => {
+    if (!unlocked) return;
+    const id = window.setInterval(() => {
+      if (!readUnlockSession()) {
+        setUnlocked(false);
+        setOpenDropdown(null);
+      }
+    }, SESSION_CHECK_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [unlocked]);
 
   /* Outside click closes the row menu */
   useEffect(() => {
@@ -255,7 +293,9 @@ export default function Home() {
       setAccessError("");
       setAccessCode("");
       try {
-        window.localStorage.setItem(UNLOCKED_KEY, "true");
+        // sessionStorage: cleared automatically when the tab/window is closed.
+        // Storing the timestamp lets us also auto-lock after 24h if the tab stays open.
+        window.sessionStorage.setItem(UNLOCKED_KEY, JSON.stringify({ unlockedAt: Date.now() }));
       } catch {
         /* storage unavailable — access still granted for this session */
       }
@@ -268,7 +308,7 @@ export default function Home() {
     setUnlocked(false);
     setOpenDropdown(null);
     try {
-      window.localStorage.removeItem(UNLOCKED_KEY);
+      window.sessionStorage.removeItem(UNLOCKED_KEY);
     } catch {
       /* storage unavailable */
     }
