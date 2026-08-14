@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 /* ----------------------------- Types & data ----------------------------- */
 
@@ -13,16 +14,15 @@ interface Task {
   name: string;
   description: string;
   assignee: string;
-  assignedBy: string; // who assigned this task to the assignee
+  assignedBy: string;
   location: string;
   status: Status;
   updatedAt: string;
-  estimatedDays?: number; // estimated days to finish, entered by the user
-  deadline?: string; // ISO datetime, auto-computed from date + estimatedDays
-  deadlineWarnedAt?: string; // ISO datetime we last sent the <6h warning email, to avoid duplicates
+  estimatedDays?: number;
+  deadline?: string;
+  deadlineWarnedAt?: string;
 }
 
-/** Form-only shape: estimatedDays is kept as a raw string while typing. */
 type TaskFormData = {
   date: string;
   name: string;
@@ -35,28 +35,22 @@ type TaskFormData = {
 
 type DeadlineLevel = "none" | "done" | "safe" | "warning" | "urgent" | "overdue";
 
-/** Global project deadlines — user-named entries (thesis, report, paper, or anything else). */
 interface ProjectDeadlineItem {
   id: string;
   name: string;
-  deadline: string; // ISO datetime
+  deadline: string;
 }
 
-const STORAGE_KEY = "thesis-tracker:tasks";
 const CURRENT_USER_KEY = "thesis-tracker:current-user";
 const UNLOCKED_KEY = "thesis-tracker:unlocked";
-const DEADLINES_KEY = "thesis-tracker:deadlines";
 const ASSIGNEES = ["Kim Thanh", "Cong Thanh"];
 
 const THESIS_TITLE = "Deep Learning-Based Surface Damage Detection and Classification for Civil Infrastructure";
 
-/** Access codes allowed to unlock the tracker (student IDs). */
 const VALID_ACCESS_CODES = ["23521447", "23521463"];
 
-/** Unlock session lifetime — after this, the tracker auto-locks even if the tab stays open. */
-const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 1 day
-/** How often to check whether the session has expired while the tab is open. */
-const SESSION_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
+const SESSION_CHECK_INTERVAL_MS = 60 * 1000;
 
 const STATUS_META: Record<Status, { label: string; badge: string; dot: string }> = {
   todo: { label: "Not Started", badge: "bg-slate-100 text-slate-600 border-slate-300", dot: "bg-slate-400" },
@@ -77,7 +71,6 @@ const nowISO = () => new Date().toISOString();
 
 const otherAssignee = (name: string) => ASSIGNEES.find((a) => a !== name) ?? ASSIGNEES[0];
 
-/** date (YYYY-MM-DD) + N days -> ISO deadline at end of that day (23:59:59). */
 const computeDeadline = (dateStr: string, days: number): string => {
   const base = new Date(`${dateStr}T00:00:00`);
   base.setDate(base.getDate() + days);
@@ -85,7 +78,6 @@ const computeDeadline = (dateStr: string, days: number): string => {
   return base.toISOString();
 };
 
-/** Human-readable "X ngày Y giờ" / "X giờ Y phút" / "X phút", ignoring sign. */
 const formatDuration = (ms: number): string => {
   const totalMinutes = Math.max(0, Math.floor(Math.abs(ms) / 60000));
   const days = Math.floor(totalMinutes / (60 * 24));
@@ -105,7 +97,6 @@ const DEADLINE_LEVEL_STYLE: Record<DeadlineLevel, string> = {
   overdue: "bg-red-100 text-red-800 border-red-400",
 };
 
-/** Deadline badge info for a single task, given the current time. */
 const getTaskDeadlineInfo = (t: Task, now: number): { level: DeadlineLevel; text: string } => {
   if (t.status === "done") return { level: "done", text: "Đã hoàn thành" };
   if (!t.deadline) return { level: "none", text: "Chưa đặt" };
@@ -116,7 +107,6 @@ const getTaskDeadlineInfo = (t: Task, now: number): { level: DeadlineLevel; text
   return { level: "safe", text: `Còn ${formatDuration(diff)}` };
 };
 
-/** Urgency level for a raw ms-diff (used for the project deadline box). */
 const getDiffLevel = (diff: number): DeadlineLevel => {
   if (diff <= 0) return "overdue";
   if (diff <= 6 * 60 * 60 * 1000) return "urgent";
@@ -133,7 +123,6 @@ const toDatetimeLocal = (iso?: string): string => {
 
 const fromDatetimeLocal = (value: string): string | undefined => (value ? new Date(value).toISOString() : undefined);
 
-/** Reads the unlock session from sessionStorage (auto-clears on tab close) and checks 24h expiry. */
 const readUnlockSession = (): boolean => {
   try {
     const raw = window.sessionStorage.getItem(UNLOCKED_KEY);
@@ -151,19 +140,36 @@ const readUnlockSession = (): boolean => {
   }
 };
 
-const seedTasks = (): Task[] => [
-  {
-    id: 1,
-    date: "2026-08-14",
-    name: "Literature review on surface damage detection methods",
-    description: "Survey existing CNN/Transformer-based approaches for crack, spalling, and corrosion detection on concrete and steel surfaces; summarize datasets and evaluation metrics used in prior work.",
-    assignee: ASSIGNEES[0],
-    assignedBy: ASSIGNEES[0],
-    location: "Drive/Documents",
-    status: "in-progress",
-    updatedAt: nowISO(),
-  },
-];
+/** DB (snake_case) → frontend (camelCase) */
+const fromDb = (row: any): Task => ({
+  id: row.id,
+  date: row.date,
+  name: row.name,
+  description: row.description ?? "",
+  assignee: row.assignee,
+  assignedBy: row.assigned_by,
+  location: row.location ?? "",
+  status: row.status,
+  updatedAt: row.updated_at,
+  estimatedDays: row.estimated_days ?? undefined,
+  deadline: row.deadline ?? undefined,
+  deadlineWarnedAt: row.deadline_warned_at ?? undefined,
+});
+
+/** Frontend → DB */
+const toDb = (t: Partial<Task>) => ({
+  date: t.date,
+  name: t.name,
+  description: t.description,
+  assignee: t.assignee,
+  assigned_by: t.assignedBy,
+  location: t.location,
+  status: t.status,
+  estimated_days: t.estimatedDays ?? null,
+  deadline: t.deadline ?? null,
+  deadline_warned_at: t.deadlineWarnedAt ?? null,
+  updated_at: t.updatedAt ?? nowISO(),
+});
 
 const emptyForm = (currentUser: string): TaskFormData => ({
   date: new Date().toISOString().split("T")[0],
@@ -294,46 +300,84 @@ export default function Home() {
   const toastTimer = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  /* Load / persist */
+  /* Load từ Supabase */
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      const savedUser = window.localStorage.getItem(CURRENT_USER_KEY);
-      const user = savedUser && ASSIGNEES.includes(savedUser) ? savedUser : ASSIGNEES[0];
-      setCurrentUser(user);
-      setFormData(emptyForm(user));
-      setTasks(raw ? (JSON.parse(raw) as Task[]) : seedTasks());
-      const rawDeadlines = window.localStorage.getItem(DEADLINES_KEY);
-      const parsedDeadlines = rawDeadlines ? JSON.parse(rawDeadlines) : [];
-      setDeadlines(Array.isArray(parsedDeadlines) ? (parsedDeadlines as ProjectDeadlineItem[]) : []);
-      // Unlock state lives in sessionStorage: it disappears when the tab is closed,
-      // and it also carries a timestamp so it expires after SESSION_DURATION_MS.
-      setUnlocked(readUnlockSession());
-    } catch {
-      setTasks(seedTasks());
-    }
-    setHydrated(true);
+    const loadData = async () => {
+      try {
+        const { data: tasksData, error: tasksError } = await supabase
+          .from("tasks")
+          .select("*")
+          .order("date", { ascending: true });
+
+        if (tasksError) throw tasksError;
+        setTasks((tasksData ?? []).map(fromDb));
+
+        const { data: deadlinesData, error: deadlinesError } = await supabase
+          .from("project_deadlines")
+          .select("*");
+
+        if (deadlinesError) throw deadlinesError;
+        setDeadlines(
+          (deadlinesData ?? []).map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            deadline: d.deadline,
+          }))
+        );
+
+        const savedUser = window.localStorage.getItem(CURRENT_USER_KEY);
+        const user = savedUser && ASSIGNEES.includes(savedUser) ? savedUser : ASSIGNEES[0];
+        setCurrentUser(user);
+        setFormData(emptyForm(user));
+        setUnlocked(readUnlockSession());
+      } catch (err) {
+        console.error("Load error:", err);
+      } finally {
+        setHydrated(true);
+      }
+    };
+
+    loadData();
   }, []);
 
+  /* Realtime: tự cập nhật khi máy khác thay đổi */
   useEffect(() => {
     if (!hydrated) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    } catch {
-      /* storage unavailable — state still works in-memory */
-    }
-  }, [tasks, hydrated]);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    try {
-      window.localStorage.setItem(DEADLINES_KEY, JSON.stringify(deadlines));
-    } catch {
-      /* storage unavailable */
-    }
-  }, [deadlines, hydrated]);
+    const channel = supabase
+      .channel("tasks-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tasks" },
+        async () => {
+          const { data } = await supabase.from("tasks").select("*").order("date");
+          if (data) setTasks(data.map(fromDb));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "project_deadlines" },
+        async () => {
+          const { data } = await supabase.from("project_deadlines").select("*");
+          if (data) {
+            setDeadlines(
+              data.map((d: any) => ({
+                id: d.id,
+                name: d.name,
+                deadline: d.deadline,
+              }))
+            );
+          }
+        }
+      )
+      .subscribe();
 
-  /* Keep all "time remaining" text live without needing user interaction. */
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [hydrated]);
+
+  /* Keep time remaining live */
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 30 * 1000);
     return () => window.clearInterval(id);
@@ -343,13 +387,9 @@ export default function Home() {
     if (!hydrated) return;
     try {
       window.localStorage.setItem(CURRENT_USER_KEY, currentUser);
-    } catch {
-      /* storage unavailable */
-    }
+    } catch {}
   }, [currentUser, hydrated]);
 
-  /* While unlocked, periodically check whether the 24h session has expired
-     (covers the case where the tab is simply left open, not closed). */
   useEffect(() => {
     if (!unlocked) return;
     const id = window.setInterval(() => {
@@ -361,8 +401,7 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [unlocked]);
 
-  /* Deadline watcher: for any task under 6h to its deadline that hasn't been
-     warned about yet, fire a warning email once and mark it so it isn't resent. */
+  /* Deadline warning email */
   useEffect(() => {
     if (!hydrated) return;
     const checkDeadlines = () => {
@@ -371,9 +410,16 @@ export default function Home() {
         if (!t.deadline || t.status === "done" || t.deadlineWarnedAt) return;
         const diff = new Date(t.deadline).getTime() - now;
         if (diff > 0 && diff <= 6 * 60 * 60 * 1000) {
-          sendDeadlineWarningEmail(t.name, t.deadline, t.assignee).then((ok) => {
+          sendDeadlineWarningEmail(t.name, t.deadline, t.assignee).then(async (ok) => {
             if (ok) {
-              setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, deadlineWarnedAt: nowISO() } : x)));
+              const warnedAt = nowISO();
+              await supabase
+                .from("tasks")
+                .update({ deadline_warned_at: warnedAt })
+                .eq("id", t.id);
+              setTasks((prev) =>
+                prev.map((x) => (x.id === t.id ? { ...x, deadlineWarnedAt: warnedAt } : x))
+              );
             }
           });
         }
@@ -384,7 +430,6 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [tasks, hydrated]);
 
-  /* Outside click closes the row menu */
   useEffect(() => {
     if (openDropdown === null) return;
     const onClick = (e: MouseEvent) => {
@@ -394,7 +439,6 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", onClick);
   }, [openDropdown]);
 
-  /* Escape closes whatever is open */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
@@ -419,12 +463,8 @@ export default function Home() {
       setAccessError("");
       setAccessCode("");
       try {
-        // sessionStorage: cleared automatically when the tab/window is closed.
-        // Storing the timestamp lets us also auto-lock after 24h if the tab stays open.
         window.sessionStorage.setItem(UNLOCKED_KEY, JSON.stringify({ unlockedAt: Date.now() }));
-      } catch {
-        /* storage unavailable — access still granted for this session */
-      }
+      } catch {}
     } else {
       setAccessError("Incorrect Password. Please try again.");
     }
@@ -435,12 +475,9 @@ export default function Home() {
     setOpenDropdown(null);
     try {
       window.sessionStorage.removeItem(UNLOCKED_KEY);
-    } catch {
-      /* storage unavailable */
-    }
+    } catch {}
   };
 
-  /** Email sent whenever a task's status changes (unchanged behavior). */
   const sendStatusEmail = async (taskName: string, status: string, user: string) => {
     try {
       await fetch("/api/update-status", {
@@ -448,13 +485,14 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "status", taskName, newStatus: status, user }),
       });
-    } catch {
-      /* best-effort notification hook */
-    }
+    } catch {}
   };
 
-  /** Email sent once when a task drops under 6h to its deadline. Returns whether it sent OK. */
-  const sendDeadlineWarningEmail = async (taskName: string, deadline: string, assignee: string): Promise<boolean> => {
+  const sendDeadlineWarningEmail = async (
+    taskName: string,
+    deadline: string,
+    assignee: string
+  ): Promise<boolean> => {
     try {
       const res = await fetch("/api/update-status", {
         method: "POST",
@@ -467,14 +505,6 @@ export default function Home() {
     }
   };
 
-  /**
-   * Assignment logic + email notification to the assignee.
-   * Only sends when BOTH are true:
-   *  - The task is actually assigned to SOMEONE ELSE (not currentUser), and
-   *  - The assignee actually changed compared to before (avoids duplicate
-   *    emails when saving an edit that doesn't change the assignee).
-   * Returns true/false so the UI knows whether to confirm "email sent".
-   */
   const notifyAssignment = async (task: Task, previousAssignee?: string): Promise<boolean> => {
     const assigneeChanged = previousAssignee === undefined || previousAssignee !== task.assignee;
     const assignedToSomeoneElse = task.assignee !== currentUser;
@@ -538,48 +568,67 @@ export default function Home() {
       assignee: formData.assignee,
       status: formData.status,
     };
-    await new Promise((r) => setTimeout(r, 300));
 
-    if (editingId) {
-      const prevTask = tasks.find((t) => t.id === editingId);
-      const deadlineChanged = prevTask?.deadline !== computedDeadline;
-      const updated: Task = {
-        ...(prevTask as Task),
-        ...cleaned,
-        estimatedDays: validEstDays,
-        deadline: computedDeadline,
-        deadlineWarnedAt: deadlineChanged ? undefined : prevTask?.deadlineWarnedAt,
-        assignedBy: prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
-        updatedAt: nowISO(),
-      };
-      setTasks((prev) => prev.map((t) => (t.id === editingId ? updated : t)));
-      await sendStatusEmail(cleaned.name, "Edited", cleaned.assignee);
-      const emailed = await notifyAssignment(updated, prevTask?.assignee);
-      showToast(
-        emailed
-          ? `Saved and sent assignment email to ${updated.assignee}`
-          : `Saved changes to "${cleaned.name}"`
-      );
-    } else {
-      const newTask: Task = {
-        id: Date.now(),
-        ...cleaned,
-        estimatedDays: validEstDays,
-        deadline: computedDeadline,
-        assignedBy: currentUser,
-        updatedAt: nowISO(),
-      };
-      setTasks((prev) => [...prev, newTask]);
-      await sendStatusEmail(cleaned.name, "Added", cleaned.assignee);
-      const emailed = await notifyAssignment(newTask, undefined);
-      showToast(
-        emailed
-          ? `Added "${cleaned.name}" and sent email to ${newTask.assignee}`
-          : `Added "${cleaned.name}" to the tracker`
-      );
+    try {
+      if (editingId) {
+        const prevTask = tasks.find((t) => t.id === editingId);
+        const deadlineChanged = prevTask?.deadline !== computedDeadline;
+
+        const updated: Task = {
+          ...(prevTask as Task),
+          ...cleaned,
+          estimatedDays: validEstDays,
+          deadline: computedDeadline,
+          deadlineWarnedAt: deadlineChanged ? undefined : prevTask?.deadlineWarnedAt,
+          assignedBy: prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
+          updatedAt: nowISO(),
+        };
+
+        const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", editingId);
+        if (error) throw error;
+
+        setTasks((prev) => prev.map((t) => (t.id === editingId ? updated : t)));
+        await sendStatusEmail(cleaned.name, "Edited", cleaned.assignee);
+        const emailed = await notifyAssignment(updated, prevTask?.assignee);
+        showToast(
+          emailed
+            ? `Saved and sent assignment email to ${updated.assignee}`
+            : `Saved changes to "${cleaned.name}"`
+        );
+      } else {
+        const newTaskData = {
+          ...cleaned,
+          estimatedDays: validEstDays,
+          deadline: computedDeadline,
+          assignedBy: currentUser,
+          updatedAt: nowISO(),
+        };
+
+        const { data, error } = await supabase
+          .from("tasks")
+          .insert(toDb(newTaskData))
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        const newTask = fromDb(data);
+        setTasks((prev) => [...prev, newTask]);
+        await sendStatusEmail(cleaned.name, "Added", cleaned.assignee);
+        const emailed = await notifyAssignment(newTask, undefined);
+        showToast(
+          emailed
+            ? `Added "${cleaned.name}" and sent email to ${newTask.assignee}`
+            : `Added "${cleaned.name}" to the tracker`
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Lỗi khi lưu task");
+    } finally {
+      setSubmitting(false);
+      resetForm();
     }
-    setSubmitting(false);
-    resetForm();
   };
 
   const handleEdit = (t: Task) => {
@@ -598,7 +647,6 @@ export default function Home() {
     setFormOpen(true);
   };
 
-  /** Live preview of the computed deadline shown under the "estimated days" field. */
   const estimatedDeadlinePreview = useMemo(() => {
     const trimmed = formData.estimatedDays.trim();
     if (!trimmed || !formData.date) return null;
@@ -614,7 +662,6 @@ export default function Home() {
     });
   }, [formData.date, formData.estimatedDays]);
 
-  /** Nearest upcoming (or, if all passed, most recently overdue) project deadline. */
   const nearestDeadline = useMemo(() => {
     const entries = deadlines
       .filter((d) => d.name.trim() && d.deadline)
@@ -625,26 +672,56 @@ export default function Home() {
     return entries.sort((a, b) => b.diff - a.diff)[0];
   }, [deadlines, nowTick]);
 
-  const handleDelete = (t: Task) => {
+  const handleDelete = async (t: Task) => {
+    const { error } = await supabase.from("tasks").delete().eq("id", t.id);
+    if (error) {
+      console.error(error);
+      showToast("Lỗi khi xóa task");
+      return;
+    }
+
     setTasks((prev) => prev.filter((x) => x.id !== t.id));
     setOpenDropdown(null);
     sendStatusEmail(t.name, "Deleted", t.assignee);
-    showToast(`Deleted "${t.name}"`, () => {
-      setTasks((prev) => [...prev, t]);
+    showToast(`Deleted "${t.name}"`, async () => {
+      const { data } = await supabase.from("tasks").insert(toDb(t)).select().single();
+      if (data) setTasks((prev) => [...prev, fromDb(data)]);
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
       setToast(null);
     });
   };
 
   const handleStatusChange = async (t: Task, status: Status) => {
+    const { error } = await supabase
+      .from("tasks")
+      .update({ status, updated_at: nowISO() })
+      .eq("id", t.id);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
     setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, status, updatedAt: nowISO() } : x)));
     await sendStatusEmail(t.name, STATUS_META[status].label, t.assignee);
   };
 
-  /** Quick-reassign a task to the other person — the "swap" button on each card. */
   const handleReassign = async (t: Task) => {
     const nextAssignee = otherAssignee(t.assignee);
-    const updated: Task = { ...t, assignee: nextAssignee, assignedBy: currentUser, updatedAt: nowISO() };
+    const updated: Task = {
+      ...t,
+      assignee: nextAssignee,
+      assignedBy: currentUser,
+      updatedAt: nowISO(),
+    };
+
+    const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", t.id);
+    if (error) {
+      console.error(error);
+      showToast("Lỗi khi gán lại task");
+      return;
+    }
+
     setTasks((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     setOpenDropdown(null);
     const emailed = await notifyAssignment(updated, t.assignee);
@@ -663,10 +740,14 @@ export default function Home() {
       .filter((t) => !q || t.name.toLowerCase().includes(q) || t.assignee.toLowerCase().includes(q));
     const byStatus = (a: Task, b: Task) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status);
     switch (sortKey) {
-      case "date-desc": return list.sort((a, b) => b.date.localeCompare(a.date));
-      case "status": return list.sort(byStatus);
-      case "assignee": return list.sort((a, b) => a.assignee.localeCompare(b.assignee));
-      default: return list.sort((a, b) => a.date.localeCompare(b.date));
+      case "date-desc":
+        return list.sort((a, b) => b.date.localeCompare(a.date));
+      case "status":
+        return list.sort(byStatus);
+      case "assignee":
+        return list.sort((a, b) => a.assignee.localeCompare(b.assignee));
+      default:
+        return list.sort((a, b) => a.date.localeCompare(b.date));
     }
   }, [tasks, statusFilter, onlyMine, currentUser, query, sortKey]);
 
@@ -745,13 +826,14 @@ export default function Home() {
       <aside className="hidden md:flex md:flex-col w-60 shrink-0 bg-white border-r border-slate-200 p-5">
         <div className="mb-6 pb-4 border-b border-slate-200">
           <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase">Undergraduate Thesis</p>
-          <h1 className="text-lg font-bold text-slate-900 font-mono">thesis<span className="text-[#D96B1F]">/</span>tracker</h1>
+          <h1 className="text-lg font-bold text-slate-900 font-mono">
+            thesis<span className="text-[#D96B1F]">/</span>tracker
+          </h1>
           <p className="text-[11px] text-slate-400 mt-2 leading-snug line-clamp-3" title={THESIS_TITLE}>
             {THESIS_TITLE}
           </p>
         </div>
 
-        {/* Current user — decides who "you" are and who "the other person" is when assigning */}
         <div className="mb-6 pb-4 border-b border-slate-200">
           <label className="block">
             <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide mb-1.5 block">You are</span>
@@ -760,7 +842,11 @@ export default function Home() {
               onChange={(e) => setCurrentUser(e.target.value)}
               className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-800 focus:outline-none focus:border-[#D96B1F]"
             >
-              {ASSIGNEES.map((a) => <option key={a} value={a}>{a}</option>)}
+              {ASSIGNEES.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
             </select>
           </label>
         </div>
@@ -772,7 +858,7 @@ export default function Home() {
         </nav>
         <div className="mt-auto pt-4 border-t border-slate-200">
           <p className="font-mono text-[11px] text-slate-400 mb-3">
-            {tasks.length} tasks · {stats.mine} yours · saved locally in browser
+            {tasks.length} tasks · {stats.mine} yours · synced with Supabase
           </p>
           <button
             onClick={handleLock}
@@ -788,7 +874,11 @@ export default function Home() {
         {(["dashboard", "kanban", "docs"] as ViewMode[]).map((id) => {
           const IconCmp = id === "dashboard" ? Icon.Dashboard : id === "kanban" ? Icon.Kanban : Icon.Docs;
           return (
-            <button key={id} onClick={() => setView(id)} className={`p-2 rounded-lg ${view === id ? "text-[#D96B1F]" : "text-slate-400"}`}>
+            <button
+              key={id}
+              onClick={() => setView(id)}
+              className={`p-2 rounded-lg ${view === id ? "text-[#D96B1F]" : "text-slate-400"}`}
+            >
               <IconCmp className="w-5 h-5" />
             </button>
           );
@@ -804,13 +894,16 @@ export default function Home() {
             <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">Thesis Progress Tracker</h2>
           </div>
           <div className="flex items-center gap-2">
-            {/* Role selector on mobile (sidebar is hidden) */}
             <select
               value={currentUser}
               onChange={(e) => setCurrentUser(e.target.value)}
               className="md:hidden bg-white border border-slate-200 rounded-lg px-2.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-[#D96B1F]"
             >
-              {ASSIGNEES.map((a) => <option key={a} value={a}>{a}</option>)}
+              {ASSIGNEES.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
             </select>
             <button
               onClick={handleLock}
@@ -819,7 +912,6 @@ export default function Home() {
             >
               <Icon.Lock className="w-4 h-4" />
             </button>
-            {/* Global deadline countdown — click to set/edit thesis, report, paper deadlines */}
             <button
               type="button"
               onClick={() => {
@@ -827,14 +919,18 @@ export default function Home() {
                 setDeadlineModalOpen(true);
               }}
               className={`flex flex-col justify-center min-w-[190px] px-4 py-2 rounded-lg border text-left transition hover:border-[#D96B1F] ${
-                nearestDeadline ? DEADLINE_LEVEL_STYLE[getDiffLevel(nearestDeadline.diff)] : "bg-white border-slate-200 text-slate-400"
+                nearestDeadline
+                  ? DEADLINE_LEVEL_STYLE[getDiffLevel(nearestDeadline.diff)]
+                  : "bg-white border-slate-200 text-slate-400"
               }`}
             >
               <span className="text-[10px] font-mono uppercase tracking-wide opacity-70">Deadline</span>
               {nearestDeadline ? (
                 <span className="text-sm font-semibold leading-tight">
                   {nearestDeadline.name} ·{" "}
-                  {nearestDeadline.diff <= 0 ? `Quá hạn ${formatDuration(nearestDeadline.diff)}` : `Còn ${formatDuration(nearestDeadline.diff)}`}
+                  {nearestDeadline.diff <= 0
+                    ? `Quá hạn ${formatDuration(nearestDeadline.diff)}`
+                    : `Còn ${formatDuration(nearestDeadline.diff)}`}
                 </span>
               ) : (
                 <span className="text-sm font-medium">+ Thêm deadline</span>
@@ -845,7 +941,7 @@ export default function Home() {
 
         <p className="text-sm text-slate-500 italic mb-6 max-w-2xl">{THESIS_TITLE}</p>
 
-        {/* Stats hero */}
+        {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 mb-8">
           <div className="bg-white border border-slate-200 rounded-2xl p-6 flex items-center gap-5 shadow-sm">
             <div
@@ -858,16 +954,23 @@ export default function Home() {
             </div>
             <div>
               <p className="text-sm text-slate-600">Completion Progress</p>
-              <p className="font-mono text-xs text-slate-400">{stats.done}/{stats.total} tasks completed</p>
+              <p className="font-mono text-xs text-slate-400">
+                {stats.done}/{stats.total} tasks completed
+              </p>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">
-            {([
-              ["Not Started", stats.todo, "text-slate-700"],
-              ["In Progress", stats.inProgress, "text-amber-600"],
-              ["Completed", stats.done, "text-emerald-600"],
-            ] as const).map(([label, val, cls]) => (
-              <div key={label} className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between shadow-sm">
+            {(
+              [
+                ["Not Started", stats.todo, "text-slate-700"],
+                ["In Progress", stats.inProgress, "text-amber-600"],
+                ["Completed", stats.done, "text-emerald-600"],
+              ] as const
+            ).map(([label, val, cls]) => (
+              <div
+                key={label}
+                className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between shadow-sm"
+              >
                 <span className="text-xs text-slate-500">{label}</span>
                 <span className={`font-mono text-2xl font-bold mt-2 ${cls}`}>{val}</span>
               </div>
@@ -893,7 +996,9 @@ export default function Home() {
           >
             <option value="all">All statuses</option>
             {STATUS_ORDER.map((s) => (
-              <option key={s} value={s}>{STATUS_META[s].label}</option>
+              <option key={s} value={s}>
+                {STATUS_META[s].label}
+              </option>
             ))}
           </select>
           <select
@@ -902,20 +1007,24 @@ export default function Home() {
             className="bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:border-[#D96B1F]"
           >
             {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
-              <option key={k} value={k}>{SORT_LABEL[k]}</option>
+              <option key={k} value={k}>
+                {SORT_LABEL[k]}
+              </option>
             ))}
           </select>
           <button
             onClick={() => setOnlyMine((v) => !v)}
             className={`px-3 py-2.5 rounded-lg text-sm font-medium border transition ${
-              onlyMine ? "bg-[#FDF1E7] border-[#D96B1F] text-[#B85A17]" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+              onlyMine
+                ? "bg-[#FDF1E7] border-[#D96B1F] text-[#B85A17]"
+                : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
             }`}
           >
             Only mine
           </button>
         </div>
 
-        {/* Dashboard: git-log style list */}
+        {/* Dashboard */}
         {view === "dashboard" && (
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm">
             {filteredTasks.length === 0 ? (
@@ -925,62 +1034,93 @@ export default function Home() {
                 {filteredTasks.map((t, i) => {
                   const deadlineInfo = getTaskDeadlineInfo(t, nowTick);
                   return (
-                  <li
-                    key={t.id}
-                    className={`flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group ${
-                      i === 0 ? "rounded-t-2xl" : ""
-                    } ${i === filteredTasks.length - 1 ? "rounded-b-2xl" : ""} ${
-                      t.assignee === currentUser ? "bg-[#FFFBF6]" : ""
-                    }`}
-                  >
-                    <div className="relative w-4 shrink-0 flex justify-center">
-                      {i !== 0 && <span className="absolute top-0 h-1/2 w-px bg-slate-200" />}
-                      {i !== filteredTasks.length - 1 && <span className="absolute bottom-0 h-1/2 w-px bg-slate-200" />}
-                      <span className={`relative mt-4 w-2.5 h-2.5 rounded-full ring-4 ring-white ${STATUS_META[t.status].dot}`} />
-                    </div>
-                    <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[90px_1fr_auto_auto_auto] gap-x-4 gap-y-1 items-center">
-                      <span className="font-mono text-xs text-slate-400" title={`Updated: ${new Date(t.updatedAt).toLocaleString("en-US")}`}>{t.date}</span>
-                      <span className="font-semibold text-slate-900 truncate">{t.name}</span>
-                      <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600 w-fit flex items-center gap-1">
-                        {t.assignee}
-                        {t.assignee === currentUser && <span className="text-[#D96B1F] font-semibold">· you</span>}
-                      </span>
-                      <span className={`text-xs border px-2.5 py-1 rounded-full w-fit ${STATUS_META[t.status].badge}`}>{STATUS_META[t.status].label}</span>
-                      <span className={`text-xs border px-2.5 py-1 rounded-full w-fit ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}>{deadlineInfo.text}</span>
-                      <span className="md:col-span-5 text-[11px] text-slate-400 font-mono truncate">
-                        {t.location && <>↳ {t.location} · </>}Assigned by {t.assignedBy}
-                      </span>
-                    </div>
-                    <div className="relative shrink-0 flex items-center gap-1" ref={openDropdown === t.id ? menuRef : undefined}>
-                      <button
-                        onClick={() => handleReassign(t)}
-                        title={`Reassign this task to ${otherAssignee(t.assignee)} and send an email`}
-                        className="text-slate-400 hover:text-[#D96B1F] p-1.5 rounded-md hover:bg-[#FDF1E7] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+                    <li
+                      key={t.id}
+                      className={`flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group ${
+                        i === 0 ? "rounded-t-2xl" : ""
+                      } ${i === filteredTasks.length - 1 ? "rounded-b-2xl" : ""} ${
+                        t.assignee === currentUser ? "bg-[#FFFBF6]" : ""
+                      }`}
+                    >
+                      <div className="relative w-4 shrink-0 flex justify-center">
+                        {i !== 0 && <span className="absolute top-0 h-1/2 w-px bg-slate-200" />}
+                        {i !== filteredTasks.length - 1 && (
+                          <span className="absolute bottom-0 h-1/2 w-px bg-slate-200" />
+                        )}
+                        <span
+                          className={`relative mt-4 w-2.5 h-2.5 rounded-full ring-4 ring-white ${STATUS_META[t.status].dot}`}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[90px_1fr_auto_auto_auto] gap-x-4 gap-y-1 items-center">
+                        <span
+                          className="font-mono text-xs text-slate-400"
+                          title={`Updated: ${new Date(t.updatedAt).toLocaleString("en-US")}`}
+                        >
+                          {t.date}
+                        </span>
+                        <span className="font-semibold text-slate-900 truncate">{t.name}</span>
+                        <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600 w-fit flex items-center gap-1">
+                          {t.assignee}
+                          {t.assignee === currentUser && (
+                            <span className="text-[#D96B1F] font-semibold">· you</span>
+                          )}
+                        </span>
+                        <span
+                          className={`text-xs border px-2.5 py-1 rounded-full w-fit ${STATUS_META[t.status].badge}`}
+                        >
+                          {STATUS_META[t.status].label}
+                        </span>
+                        <span
+                          className={`text-xs border px-2.5 py-1 rounded-full w-fit ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}
+                        >
+                          {deadlineInfo.text}
+                        </span>
+                        <span className="md:col-span-5 text-[11px] text-slate-400 font-mono truncate">
+                          {t.location && <>↳ {t.location} · </>}Assigned by {t.assignedBy}
+                        </span>
+                      </div>
+                      <div
+                        className="relative shrink-0 flex items-center gap-1"
+                        ref={openDropdown === t.id ? menuRef : undefined}
                       >
-                        <Icon.Swap className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => setOpenDropdown(openDropdown === t.id ? null : t.id)}
-                        className="text-slate-400 hover:text-slate-900 p-1.5 rounded-md hover:bg-slate-100 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
-                        aria-label="Actions"
-                      >
-                        <Icon.Dots className="w-4 h-4" />
-                      </button>
-                      {openDropdown === t.id && (
-                        <div className="absolute right-0 top-9 bg-white border border-slate-200 shadow-lg rounded-lg z-10 w-44 py-1.5 text-sm">
-                          <button onClick={() => handleEdit(t)} className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-700">
-                            <Icon.Pencil className="w-3.5 h-3.5" /> Edit
-                          </button>
-                          <button onClick={() => handleReassign(t)} className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-[#FDF1E7] text-slate-700">
-                            <Icon.Mail className="w-3.5 h-3.5" /> Assign to {otherAssignee(t.assignee)}
-                          </button>
-                          <button onClick={() => handleDelete(t)} className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-red-50 text-red-600">
-                            <Icon.Trash className="w-3.5 h-3.5" /> Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </li>
+                        <button
+                          onClick={() => handleReassign(t)}
+                          title={`Reassign this task to ${otherAssignee(t.assignee)} and send an email`}
+                          className="text-slate-400 hover:text-[#D96B1F] p-1.5 rounded-md hover:bg-[#FDF1E7] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+                        >
+                          <Icon.Swap className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setOpenDropdown(openDropdown === t.id ? null : t.id)}
+                          className="text-slate-400 hover:text-slate-900 p-1.5 rounded-md hover:bg-slate-100 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+                          aria-label="Actions"
+                        >
+                          <Icon.Dots className="w-4 h-4" />
+                        </button>
+                        {openDropdown === t.id && (
+                          <div className="absolute right-0 top-9 bg-white border border-slate-200 shadow-lg rounded-lg z-10 w-44 py-1.5 text-sm">
+                            <button
+                              onClick={() => handleEdit(t)}
+                              className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-700"
+                            >
+                              <Icon.Pencil className="w-3.5 h-3.5" /> Edit
+                            </button>
+                            <button
+                              onClick={() => handleReassign(t)}
+                              className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-[#FDF1E7] text-slate-700"
+                            >
+                              <Icon.Mail className="w-3.5 h-3.5" /> Assign to {otherAssignee(t.assignee)}
+                            </button>
+                            <button
+                              onClick={() => handleDelete(t)}
+                              className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-red-50 text-red-600"
+                            >
+                              <Icon.Trash className="w-3.5 h-3.5" /> Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </li>
                   );
                 })}
               </ul>
@@ -1008,29 +1148,55 @@ export default function Home() {
                       const next = STATUS_ORDER[idx + 1];
                       const deadlineInfo = getTaskDeadlineInfo(t, nowTick);
                       return (
-                        <div key={t.id} className={`bg-white border rounded-xl p-3 shadow-sm ${t.assignee === currentUser ? "border-[#F0C39A]" : "border-slate-200"}`}>
+                        <div
+                          key={t.id}
+                          className={`bg-white border rounded-xl p-3 shadow-sm ${
+                            t.assignee === currentUser ? "border-[#F0C39A]" : "border-slate-200"
+                          }`}
+                        >
                           <p className="text-sm font-medium text-slate-900 mb-1.5">{t.name}</p>
                           {deadlineInfo.level !== "none" && (
-                            <span className={`inline-block text-[10px] border px-2 py-0.5 rounded-full mb-1.5 ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}>
+                            <span
+                              className={`inline-block text-[10px] border px-2 py-0.5 rounded-full mb-1.5 ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}
+                            >
                               {deadlineInfo.text}
                             </span>
                           )}
                           <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-mono text-slate-400">{t.date} · {t.assignee}</span>
+                            <span className="text-[11px] font-mono text-slate-400">
+                              {t.date} · {t.assignee}
+                            </span>
                             <div className="flex items-center gap-1">
                               {prev && (
-                                <button onClick={() => handleStatusChange(t, prev)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Move back to ${STATUS_META[prev].label}`}>
+                                <button
+                                  onClick={() => handleStatusChange(t, prev)}
+                                  className="p-1 text-slate-400 hover:text-[#D96B1F]"
+                                  aria-label={`Move back to ${STATUS_META[prev].label}`}
+                                >
                                   <Icon.ArrowLeft className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              <button onClick={() => handleReassign(t)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Assign to ${otherAssignee(t.assignee)}`} title={`Assign to ${otherAssignee(t.assignee)}`}>
+                              <button
+                                onClick={() => handleReassign(t)}
+                                className="p-1 text-slate-400 hover:text-[#D96B1F]"
+                                aria-label={`Assign to ${otherAssignee(t.assignee)}`}
+                                title={`Assign to ${otherAssignee(t.assignee)}`}
+                              >
                                 <Icon.Swap className="w-3.5 h-3.5" />
                               </button>
-                              <button onClick={() => handleEdit(t)} className="p-1 text-slate-400 hover:text-slate-700" aria-label="Edit">
+                              <button
+                                onClick={() => handleEdit(t)}
+                                className="p-1 text-slate-400 hover:text-slate-700"
+                                aria-label="Edit"
+                              >
                                 <Icon.Pencil className="w-3.5 h-3.5" />
                               </button>
                               {next && (
-                                <button onClick={() => handleStatusChange(t, next)} className="p-1 text-slate-400 hover:text-[#D96B1F]" aria-label={`Move forward to ${STATUS_META[next].label}`}>
+                                <button
+                                  onClick={() => handleStatusChange(t, next)}
+                                  className="p-1 text-slate-400 hover:text-[#D96B1F]"
+                                  aria-label={`Move forward to ${STATUS_META[next].label}`}
+                                >
                                   <Icon.ArrowRight className="w-3.5 h-3.5" />
                                 </button>
                               )}
@@ -1061,14 +1227,17 @@ export default function Home() {
                       <p className="text-sm font-medium text-slate-900 truncate">{t.name}</p>
                       <p className="text-xs font-mono text-slate-400 truncate">{t.location}</p>
                     </div>
-                    <span className={`text-xs border px-2.5 py-1 rounded-full shrink-0 ${STATUS_META[t.status].badge}`}>{STATUS_META[t.status].label}</span>
+                    <span
+                      className={`text-xs border px-2.5 py-1 rounded-full shrink-0 ${STATUS_META[t.status].badge}`}
+                    >
+                      {STATUS_META[t.status].label}
+                    </span>
                   </div>
                 ))
             )}
           </div>
         )}
 
-        {/* Add task — placed below the list/board so it doesn't compete with the header */}
         <div className="mt-6 flex justify-center">
           <button
             onClick={() => setFormOpen(true)}
@@ -1079,13 +1248,24 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Global deadline modal — add/rename/remove any number of named deadlines */}
+      {/* Deadline modal */}
       {deadlineModalOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setDeadlineModalOpen(false)}>
-          <div onClick={(e) => e.stopPropagation()} className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4"
+          onClick={() => setDeadlineModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto"
+          >
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-semibold text-slate-900">Deadline chung</h3>
-              <button type="button" onClick={() => setDeadlineModalOpen(false)} className="text-slate-400 hover:text-slate-700" aria-label="Close">
+              <button
+                type="button"
+                onClick={() => setDeadlineModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700"
+                aria-label="Close"
+              >
                 <Icon.X className="w-4 h-4" />
               </button>
             </div>
@@ -1101,7 +1281,9 @@ export default function Home() {
                         type="text"
                         value={item.name}
                         onChange={(e) =>
-                          setDeadlineForm((prev) => prev.map((d) => (d.id === item.id ? { ...d, name: e.target.value } : d)))
+                          setDeadlineForm((prev) =>
+                            prev.map((d) => (d.id === item.id ? { ...d, name: e.target.value } : d))
+                          )
                         }
                         placeholder="Ví dụ: Khóa luận, Báo cáo, Bài báo..."
                         className="input"
@@ -1113,7 +1295,11 @@ export default function Home() {
                         value={toDatetimeLocal(item.deadline)}
                         onChange={(e) =>
                           setDeadlineForm((prev) =>
-                            prev.map((d) => (d.id === item.id ? { ...d, deadline: fromDatetimeLocal(e.target.value) ?? "" } : d))
+                            prev.map((d) =>
+                              d.id === item.id
+                                ? { ...d, deadline: fromDatetimeLocal(e.target.value) ?? "" }
+                                : d
+                            )
                           )
                         }
                         className="input"
@@ -1153,8 +1339,13 @@ export default function Home() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setDeadlines(deadlineForm.filter((d) => d.name.trim() && d.deadline));
+                onClick={async () => {
+                  const cleaned = deadlineForm.filter((d) => d.name.trim() && d.deadline);
+                  await supabase.from("project_deadlines").delete().neq("id", "");
+                  if (cleaned.length > 0) {
+                    await supabase.from("project_deadlines").insert(cleaned);
+                  }
+                  setDeadlines(cleaned);
                   setDeadlineModalOpen(false);
                 }}
                 className="flex-1 py-2.5 rounded-lg bg-[#D96B1F] text-white font-semibold hover:bg-[#c25f1a] text-sm"
@@ -1204,11 +1395,19 @@ export default function Home() {
               </Field>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Date" error={errors.date}>
-                  <input type="date" name="date" value={formData.date} onChange={handleInputChange} className={`input ${errors.date ? "input-error" : ""}`} />
+                  <input
+                    type="date"
+                    name="date"
+                    value={formData.date}
+                    onChange={handleInputChange}
+                    className={`input ${errors.date ? "input-error" : ""}`}
+                  />
                 </Field>
                 <Field label="Assignee">
                   <select name="assignee" value={formData.assignee} onChange={handleInputChange} className="input">
-                    {ASSIGNEES.map((a) => <option key={a}>{a}</option>)}
+                    {ASSIGNEES.map((a) => (
+                      <option key={a}>{a}</option>
+                    ))}
                   </select>
                 </Field>
               </div>
@@ -1232,20 +1431,35 @@ export default function Home() {
               {formData.assignee !== currentUser && (
                 <p className="flex items-center gap-1.5 text-xs text-[#B85A17] bg-[#FDF1E7] border border-[#F0C39A] rounded-lg px-3 py-2">
                   <Icon.Mail className="w-3.5 h-3.5 shrink-0" />
-                  When you save, the system will email {formData.assignee} to let them know you just assigned this task to them.
+                  When you save, the system will email {formData.assignee} to let them know you just assigned this task
+                  to them.
                 </p>
               )}
               <Field label="Status">
                 <select name="status" value={formData.status} onChange={handleInputChange} className="input">
-                  {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
+                  {STATUS_ORDER.map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_META[s].label}
+                    </option>
+                  ))}
                 </select>
               </Field>
               <Field label="Storage location">
-                <input name="location" value={formData.location} onChange={handleInputChange} placeholder="Link/Folder..." className="input" />
+                <input
+                  name="location"
+                  value={formData.location}
+                  onChange={handleInputChange}
+                  placeholder="Link/Folder..."
+                  className="input"
+                />
               </Field>
             </div>
             <div className="flex gap-3 mt-6">
-              <button type="button" onClick={resetForm} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium">
+              <button
+                type="button"
+                onClick={resetForm}
+                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium"
+              >
                 Cancel
               </button>
               <button
