@@ -762,8 +762,6 @@ export default function Home() {
     return entries.sort((a, b) => b.diff - a.diff)[0];
   }, [deadlines, nowTick]);
 
-  const nearestDeadlineLevel = nearestDeadline ? getDiffLevel(nearestDeadline.diff) : null;
-  const nearestDeadlineIsCritical = nearestDeadlineLevel === "urgent" || nearestDeadlineLevel === "overdue";
   const blinkOn = Math.floor(nowTick / 1000) % 2 === 0;
 
   const handleDelete = async (t: Task) => {
@@ -1008,35 +1006,25 @@ export default function Home() {
                 setDeadlineForm(deadlines);
                 setDeadlineModalOpen(true);
               }}
-              className={`flex flex-col justify-center min-w-[220px] px-5 py-3 rounded-xl border-2 text-left transition-colors ${
+              className={`flex flex-col justify-center min-w-[180px] px-4 py-2.5 rounded-lg border-2 text-left transition-colors ${
                 nearestDeadline
-                  ? nearestDeadlineIsCritical
-                    ? "bg-red-600 border-red-700 text-white shadow-sm"
-                    : `${DEADLINE_LEVEL_STYLE[nearestDeadlineLevel as DeadlineLevel]} hover:border-[#D96B1F]`
+                  ? "bg-red-600 border-red-700 text-white shadow-sm"
                   : "bg-white border-slate-200 text-slate-400 hover:border-[#D96B1F]"
               }`}
             >
-              <span
-                className={`text-[10px] font-mono uppercase tracking-wide ${
-                  nearestDeadlineIsCritical ? "opacity-90" : "opacity-70"
-                }`}
-              >
-                Deadline{nearestDeadline && nearestDeadlineIsCritical ? " · urgent" : ""}
+              <span className={`text-[10px] font-mono uppercase tracking-wide ${nearestDeadline ? "opacity-90" : "opacity-70"}`}>
+                Deadline
               </span>
               {nearestDeadline ? (
                 <>
                   <span
-                    className={`text-sm font-semibold leading-tight truncate ${
-                      nearestDeadlineIsCritical ? "text-white" : "text-slate-900"
+                    className={`text-sm font-semibold leading-tight truncate transition-opacity duration-150 ${
+                      blinkOn ? "opacity-100" : "opacity-25"
                     }`}
                   >
                     {nearestDeadline.name}
                   </span>
-                  <span
-                    className={`font-mono font-bold tracking-wide mt-0.5 text-lg transition-opacity duration-150 ${
-                      nearestDeadlineIsCritical ? (blinkOn ? "opacity-100" : "opacity-40") : ""
-                    }`}
-                  >
+                  <span className="font-mono font-bold tracking-wide mt-0.5 text-base">
                     {nearestDeadline.diff <= 0
                       ? `Overdue ${formatCountdownClock(nearestDeadline.diff)}`
                       : `${formatCountdownClock(nearestDeadline.diff)} left`}
