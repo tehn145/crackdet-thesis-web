@@ -31,6 +31,7 @@ type TaskFormData = {
   location: string;
   status: Status;
   estimatedDays: string;
+  estimatedHours: string;
 };
 
 type DeadlineLevel = "none" | "done" | "safe" | "warning" | "urgent" | "overdue";
@@ -78,11 +79,11 @@ const nowISO = () => new Date().toISOString();
 
 const otherAssignee = (name: string) => ASSIGNEES.find((a) => a !== name) ?? ASSIGNEES[0];
 
+/** days may be fractional (e.g. 0.25 = 6 hours). Adds the exact duration to the start of dateStr. */
 const computeDeadline = (dateStr: string, days: number): string => {
   const base = new Date(`${dateStr}T00:00:00`);
-  base.setDate(base.getDate() + days);
-  base.setHours(23, 59, 59, 999);
-  return base.toISOString();
+  const target = base.getTime() + days * 24 * 60 * 60 * 1000;
+  return new Date(target).toISOString();
 };
 
 const formatDuration = (ms: number): string => {
@@ -198,6 +199,7 @@ const emptyForm = (currentUser: string): TaskFormData => ({
   location: "",
   status: "todo",
   estimatedDays: "",
+  estimatedHours: "",
 });
 
 /* --------------------------------- Icons --------------------------------- */
@@ -461,15 +463,21 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [unlocked]);
 
-  /* Deadline warning email */
+  /* Deadline warning email
+     - Tasks whose total estimated duration (date → deadline) is under 1 day: warn 30 minutes before the deadline.
+     - Tasks whose total estimated duration is 1 day or more: warn 6 hours before the deadline (previous behavior). */
   useEffect(() => {
     if (!hydrated) return;
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
     const checkDeadlines = () => {
       const now = Date.now();
       tasks.forEach((t) => {
         if (!t.deadline || t.status === "done" || t.deadlineWarnedAt) return;
-        const diff = new Date(t.deadline).getTime() - now;
-        if (diff > 0 && diff <= 6 * 60 * 60 * 1000) {
+        const deadlineMs = new Date(t.deadline).getTime();
+        const diff = deadlineMs - now;
+        const totalDurationMs = deadlineMs - new Date(`${t.date}T00:00:00`).getTime();
+        const warnThreshold = totalDurationMs < ONE_DAY_MS ? 30 * 60 * 1000 : 6 * 60 * 60 * 1000;
+        if (diff > 0 && diff <= warnThreshold) {
           sendDeadlineWarningEmail(t.name, t.deadline, t.assignee).then(async (ok) => {
             if (ok) {
               const warnedAt = nowISO();
@@ -483,7 +491,7 @@ export default function Home() {
       });
     };
     checkDeadlines();
-    const id = window.setInterval(checkDeadlines, 5 * 60 * 1000);
+    const id = window.setInterval(checkDeadlines, 60 * 1000);
     return () => window.clearInterval(id);
   }, [tasks, hydrated]);
 
@@ -618,8 +626,13 @@ export default function Home() {
     setSubmitting(true);
 
     const estDaysTrim = formData.estimatedDays.trim();
-    const estDaysNum = estDaysTrim === "" ? NaN : Number(estDaysTrim);
-    const validEstDays = !Number.isNaN(estDaysNum) && estDaysNum > 0 ? estDaysNum : undefined;
+    const estHoursTrim = formData.estimatedHours.trim();
+    const estDaysNum = estDaysTrim === "" ? 0 : Number(estDaysTrim);
+    const estHoursNum = estHoursTrim === "" ? 0 : Number(estHoursTrim);
+    const safeDays = !Number.isNaN(estDaysNum) && estDaysNum > 0 ? estDaysNum : 0;
+    const safeHours = !Number.isNaN(estHoursNum) && estHoursNum > 0 ? estHoursNum : 0;
+    const totalEstDays = safeDays + safeHours / 24;
+    const validEstDays = totalEstDays > 0 ? totalEstDays : undefined;
     const computedDeadline =
       validEstDays !== undefined ? computeDeadline(formData.date, validEstDays) : undefined;
 
@@ -697,6 +710,14 @@ export default function Home() {
 
   const handleEdit = (t: Task) => {
     setEditingId(t.id);
+    let estimatedDaysStr = "";
+    let estimatedHoursStr = "";
+    if (t.estimatedDays !== undefined) {
+      const wholeDays = Math.floor(t.estimatedDays);
+      const remHours = Math.round((t.estimatedDays - wholeDays) * 24);
+      estimatedDaysStr = wholeDays > 0 ? String(wholeDays) : "";
+      estimatedHoursStr = remHours > 0 ? String(remHours) : "";
+    }
     setFormData({
       date: t.date,
       name: t.name,
@@ -704,7 +725,8 @@ export default function Home() {
       assignee: t.assignee,
       location: t.location,
       status: t.status,
-      estimatedDays: t.estimatedDays !== undefined ? String(t.estimatedDays) : "",
+      estimatedDays: estimatedDaysStr,
+      estimatedHours: estimatedHoursStr,
     });
     setErrors({});
     setOpenDropdown(null);
@@ -712,11 +734,15 @@ export default function Home() {
   };
 
   const estimatedDeadlinePreview = useMemo(() => {
-    const trimmed = formData.estimatedDays.trim();
-    if (!trimmed || !formData.date) return null;
-    const n = Number(trimmed);
-    if (Number.isNaN(n) || n <= 0) return null;
-    const iso = computeDeadline(formData.date, n);
+    if (!formData.date) return null;
+    const daysTrim = formData.estimatedDays.trim();
+    const hoursTrim = formData.estimatedHours.trim();
+    const daysNum = daysTrim === "" ? 0 : Number(daysTrim);
+    const hoursNum = hoursTrim === "" ? 0 : Number(hoursTrim);
+    if (Number.isNaN(daysNum) || Number.isNaN(hoursNum)) return null;
+    const totalDays = daysNum + hoursNum / 24;
+    if (totalDays <= 0) return null;
+    const iso = computeDeadline(formData.date, totalDays);
     return new Date(iso).toLocaleString("en-US", {
       day: "2-digit",
       month: "2-digit",
@@ -724,7 +750,7 @@ export default function Home() {
       hour: "2-digit",
       minute: "2-digit",
     });
-  }, [formData.date, formData.estimatedDays]);
+  }, [formData.date, formData.estimatedDays, formData.estimatedHours]);
 
   const nearestDeadline = useMemo(() => {
     const entries = deadlines
@@ -982,18 +1008,16 @@ export default function Home() {
                 setDeadlineForm(deadlines);
                 setDeadlineModalOpen(true);
               }}
-              className={`flex flex-col justify-center min-w-[280px] px-6 py-4 rounded-2xl border-2 text-left transition-colors duration-150 ${
+              className={`flex flex-col justify-center min-w-[220px] px-5 py-3 rounded-xl border-2 text-left transition-colors ${
                 nearestDeadline
                   ? nearestDeadlineIsCritical
-                    ? blinkOn
-                      ? "bg-red-600 border-red-700 text-white shadow-lg shadow-red-600/30"
-                      : "bg-red-500 border-red-600 text-white shadow-lg shadow-red-500/20"
+                    ? "bg-red-600 border-red-700 text-white shadow-sm"
                     : `${DEADLINE_LEVEL_STYLE[nearestDeadlineLevel as DeadlineLevel]} hover:border-[#D96B1F]`
                   : "bg-white border-slate-200 text-slate-400 hover:border-[#D96B1F]"
               }`}
             >
               <span
-                className={`text-[11px] font-mono uppercase tracking-wide ${
+                className={`text-[10px] font-mono uppercase tracking-wide ${
                   nearestDeadlineIsCritical ? "opacity-90" : "opacity-70"
                 }`}
               >
@@ -1009,8 +1033,8 @@ export default function Home() {
                     {nearestDeadline.name}
                   </span>
                   <span
-                    className={`font-mono font-bold tracking-wide mt-1 ${
-                      nearestDeadlineIsCritical ? "text-2xl" : "text-lg"
+                    className={`font-mono font-bold tracking-wide mt-0.5 text-lg transition-opacity duration-150 ${
+                      nearestDeadlineIsCritical ? (blinkOn ? "opacity-100" : "opacity-40") : ""
                     }`}
                   >
                     {nearestDeadline.diff <= 0
@@ -1516,18 +1540,33 @@ export default function Home() {
                   </select>
                 </Field>
               </div>
-              <Field label="Estimated days to complete">
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  name="estimatedDays"
-                  value={formData.estimatedDays}
-                  onChange={handleInputChange}
-                  placeholder="e.g. 5"
-                  className="input"
-                />
-              </Field>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Estimated days">
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    name="estimatedDays"
+                    value={formData.estimatedDays}
+                    onChange={handleInputChange}
+                    placeholder="e.g. 0"
+                    className="input"
+                  />
+                </Field>
+                <Field label="Estimated hours">
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    step={1}
+                    name="estimatedHours"
+                    value={formData.estimatedHours}
+                    onChange={handleInputChange}
+                    placeholder="e.g. 6"
+                    className="input"
+                  />
+                </Field>
+              </div>
               {estimatedDeadlinePreview && (
                 <p className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                   Estimated deadline:{" "}
