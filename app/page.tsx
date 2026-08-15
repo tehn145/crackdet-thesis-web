@@ -1006,32 +1006,32 @@ export default function Home() {
                 setDeadlineForm(deadlines);
                 setDeadlineModalOpen(true);
               }}
-              className={`flex flex-col justify-center min-w-[180px] px-4 py-2.5 rounded-lg border-2 text-left transition-colors ${
+              className={`flex flex-col justify-center min-w-[140px] px-3 py-1.5 rounded-md border text-left transition-colors ${
                 nearestDeadline
                   ? "bg-red-600 border-red-700 text-white shadow-sm"
                   : "bg-white border-slate-200 text-slate-400 hover:border-[#D96B1F]"
               }`}
             >
-              <span className={`text-[10px] font-mono uppercase tracking-wide ${nearestDeadline ? "opacity-90" : "opacity-70"}`}>
+              <span className={`text-[9px] font-mono uppercase tracking-wide ${nearestDeadline ? "opacity-90" : "opacity-70"}`}>
                 Deadline
               </span>
               {nearestDeadline ? (
                 <>
                   <span
-                    className={`text-sm font-semibold leading-tight truncate transition-opacity duration-150 ${
+                    className={`text-xs font-semibold leading-tight truncate transition-opacity duration-150 ${
                       blinkOn ? "opacity-100" : "opacity-25"
                     }`}
                   >
                     {nearestDeadline.name}
                   </span>
-                  <span className="font-mono font-bold tracking-wide mt-0.5 text-base">
+                  <span className="font-mono font-bold tracking-wide text-xs">
                     {nearestDeadline.diff <= 0
                       ? `Overdue ${formatCountdownClock(nearestDeadline.diff)}`
                       : `${formatCountdownClock(nearestDeadline.diff)} left`}
                   </span>
                 </>
               ) : (
-                <span className="text-sm font-medium">+ Add deadline</span>
+                <span className="text-xs font-medium">+ Add deadline</span>
               )}
             </button>
           </div>
