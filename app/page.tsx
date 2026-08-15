@@ -57,6 +57,7 @@ const ACCESS_CODE_TO_USER: Record<string, string> = {
 
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 const SESSION_CHECK_INTERVAL_MS = 60 * 1000;
+const CLOCK_TICK_INTERVAL_MS = 1000;
 
 const STATUS_META: Record<Status, { label: string; badge: string; dot: string }> = {
   todo: { label: "Not Started", badge: "bg-slate-100 text-slate-600 border-slate-300", dot: "bg-slate-400" },
@@ -89,9 +90,20 @@ const formatDuration = (ms: number): string => {
   const days = Math.floor(totalMinutes / (60 * 24));
   const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
   const minutes = totalMinutes % 60;
-  if (days > 0) return `${days} ngày ${hours} giờ`;
-  if (hours > 0) return `${hours} giờ ${minutes} phút`;
-  return `${minutes} phút`;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
+
+/** Precise "1d 06:30:25" style countdown, ticking down to the second. */
+const formatCountdownClock = (ms: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(Math.abs(ms) / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return days > 0 ? `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}` : `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 };
 
 const DEADLINE_LEVEL_STYLE: Record<DeadlineLevel, string> = {
@@ -104,13 +116,13 @@ const DEADLINE_LEVEL_STYLE: Record<DeadlineLevel, string> = {
 };
 
 const getTaskDeadlineInfo = (t: Task, now: number): { level: DeadlineLevel; text: string } => {
-  if (t.status === "done") return { level: "done", text: "Đã hoàn thành" };
-  if (!t.deadline) return { level: "none", text: "Chưa đặt" };
+  if (t.status === "done") return { level: "done", text: "Completed" };
+  if (!t.deadline) return { level: "none", text: "No deadline set" };
   const diff = new Date(t.deadline).getTime() - now;
-  if (diff <= 0) return { level: "overdue", text: `Quá hạn ${formatDuration(diff)}` };
-  if (diff <= 6 * 60 * 60 * 1000) return { level: "urgent", text: `Còn ${formatDuration(diff)}` };
-  if (diff <= 24 * 60 * 60 * 1000) return { level: "warning", text: `Còn ${formatDuration(diff)}` };
-  return { level: "safe", text: `Còn ${formatDuration(diff)}` };
+  if (diff <= 0) return { level: "overdue", text: `Overdue by ${formatDuration(diff)}` };
+  if (diff <= 6 * 60 * 60 * 1000) return { level: "urgent", text: `${formatDuration(diff)} left` };
+  if (diff <= 24 * 60 * 60 * 1000) return { level: "warning", text: `${formatDuration(diff)} left` };
+  return { level: "safe", text: `${formatDuration(diff)} left` };
 };
 
 const getDiffLevel = (diff: number): DeadlineLevel => {
@@ -349,7 +361,7 @@ export default function Home() {
   const toastTimer = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  /* Load từ supabase */
+  /* Load from supabase */
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -427,7 +439,7 @@ export default function Home() {
   }, [hydrated]);
 
   useEffect(() => {
-    const id = window.setInterval(() => setNowTick(Date.now()), 30 * 1000);
+    const id = window.setInterval(() => setNowTick(Date.now()), CLOCK_TICK_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, []);
 
@@ -676,7 +688,7 @@ export default function Home() {
       }
     } catch (err) {
       console.error(err);
-      showToast("Lỗi khi lưu task");
+      showToast("Error saving task");
     } finally {
       setSubmitting(false);
       resetForm();
@@ -705,7 +717,7 @@ export default function Home() {
     const n = Number(trimmed);
     if (Number.isNaN(n) || n <= 0) return null;
     const iso = computeDeadline(formData.date, n);
-    return new Date(iso).toLocaleString("vi-VN", {
+    return new Date(iso).toLocaleString("en-US", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
@@ -724,11 +736,15 @@ export default function Home() {
     return entries.sort((a, b) => b.diff - a.diff)[0];
   }, [deadlines, nowTick]);
 
+  const nearestDeadlineLevel = nearestDeadline ? getDiffLevel(nearestDeadline.diff) : null;
+  const nearestDeadlineIsCritical = nearestDeadlineLevel === "urgent" || nearestDeadlineLevel === "overdue";
+  const blinkOn = Math.floor(nowTick / 1000) % 2 === 0;
+
   const handleDelete = async (t: Task) => {
     const { error } = await supabase.from("tasks").delete().eq("id", t.id);
     if (error) {
       console.error(error);
-      showToast("Lỗi khi xóa task");
+      showToast("Error deleting task");
       return;
     }
 
@@ -770,7 +786,7 @@ export default function Home() {
     const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", t.id);
     if (error) {
       console.error(error);
-      showToast("Lỗi khi gán lại task");
+      showToast("Error reassigning task");
       return;
     }
 
@@ -898,7 +914,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* User info (không cho chọn nữa) */}
+        {/* User info (fixed, not selectable) */}
         <div className="mb-6 pb-4 border-b border-slate-200">
           <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide mb-1.5">
             You are
@@ -949,7 +965,7 @@ export default function Home() {
             <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">Thesis Progress Tracker</h2>
           </div>
           <div className="flex items-center gap-2">
-            {/* Mobile: hiện tên user */}
+            {/* Mobile: show user name */}
             <div className="md:hidden flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium">
               {currentUser}
             </div>
@@ -966,22 +982,44 @@ export default function Home() {
                 setDeadlineForm(deadlines);
                 setDeadlineModalOpen(true);
               }}
-              className={`flex flex-col justify-center min-w-[190px] px-4 py-2 rounded-lg border text-left transition hover:border-[#D96B1F] ${
+              className={`flex flex-col justify-center min-w-[280px] px-6 py-4 rounded-2xl border-2 text-left transition-colors duration-150 ${
                 nearestDeadline
-                  ? DEADLINE_LEVEL_STYLE[getDiffLevel(nearestDeadline.diff)]
-                  : "bg-white border-slate-200 text-slate-400"
+                  ? nearestDeadlineIsCritical
+                    ? blinkOn
+                      ? "bg-red-600 border-red-700 text-white shadow-lg shadow-red-600/30"
+                      : "bg-red-500 border-red-600 text-white shadow-lg shadow-red-500/20"
+                    : `${DEADLINE_LEVEL_STYLE[nearestDeadlineLevel as DeadlineLevel]} hover:border-[#D96B1F]`
+                  : "bg-white border-slate-200 text-slate-400 hover:border-[#D96B1F]"
               }`}
             >
-              <span className="text-[10px] font-mono uppercase tracking-wide opacity-70">Deadline</span>
+              <span
+                className={`text-[11px] font-mono uppercase tracking-wide ${
+                  nearestDeadlineIsCritical ? "opacity-90" : "opacity-70"
+                }`}
+              >
+                Deadline{nearestDeadline && nearestDeadlineIsCritical ? " · urgent" : ""}
+              </span>
               {nearestDeadline ? (
-                <span className="text-sm font-semibold leading-tight">
-                  {nearestDeadline.name} ·{" "}
-                  {nearestDeadline.diff <= 0
-                    ? `Quá hạn ${formatDuration(nearestDeadline.diff)}`
-                    : `Còn ${formatDuration(nearestDeadline.diff)}`}
-                </span>
+                <>
+                  <span
+                    className={`text-sm font-semibold leading-tight truncate ${
+                      nearestDeadlineIsCritical ? "text-white" : "text-slate-900"
+                    }`}
+                  >
+                    {nearestDeadline.name}
+                  </span>
+                  <span
+                    className={`font-mono font-bold tracking-wide mt-1 ${
+                      nearestDeadlineIsCritical ? "text-2xl" : "text-lg"
+                    }`}
+                  >
+                    {nearestDeadline.diff <= 0
+                      ? `Overdue ${formatCountdownClock(nearestDeadline.diff)}`
+                      : `${formatCountdownClock(nearestDeadline.diff)} left`}
+                  </span>
+                </>
               ) : (
-                <span className="text-sm font-medium">+ Thêm deadline</span>
+                <span className="text-sm font-medium">+ Add deadline</span>
               )}
             </button>
           </div>
@@ -1118,11 +1156,13 @@ export default function Home() {
                         >
                           {STATUS_META[t.status].label}
                         </span>
-                        <span
-                          className={`text-xs border px-2.5 py-1 rounded-full w-fit ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}
-                        >
-                          {deadlineInfo.text}
-                        </span>
+                        {t.status !== "done" && (
+                          <span
+                            className={`text-xs border px-2.5 py-1 rounded-full w-fit ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}
+                          >
+                            {deadlineInfo.text}
+                          </span>
+                        )}
                         <span className="md:col-span-5 text-[11px] text-slate-400 font-mono truncate">
                           {t.location && <>↳ {t.location} · </>}Assigned by {t.assignedBy}
                         </span>
@@ -1203,7 +1243,7 @@ export default function Home() {
                           }`}
                         >
                           <p className="text-sm font-medium text-slate-900 mb-1.5">{t.name}</p>
-                          {deadlineInfo.level !== "none" && (
+                          {t.status !== "done" && deadlineInfo.level !== "none" && (
                             <span
                               className={`inline-block text-[10px] border px-2 py-0.5 rounded-full mb-1.5 ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}
                             >
@@ -1307,7 +1347,7 @@ export default function Home() {
             className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold text-slate-900">Deadline chung</h3>
+              <h3 className="font-semibold text-slate-900">Project Deadlines</h3>
               <button
                 type="button"
                 onClick={() => setDeadlineModalOpen(false)}
@@ -1320,13 +1360,13 @@ export default function Home() {
             <div className="space-y-3">
               {deadlineForm.length === 0 && (
                 <p className="text-sm text-slate-400 italic">
-                  Chưa có deadline nào. Thêm mốc đầu tiên bên dưới.
+                  No deadlines yet. Add your first one below.
                 </p>
               )}
               {deadlineForm.map((item) => (
                 <div key={item.id} className="flex items-end gap-2 border border-slate-200 rounded-lg p-3">
                   <div className="flex-1 space-y-2">
-                    <Field label="Tên">
+                    <Field label="Name">
                       <input
                         type="text"
                         value={item.name}
@@ -1335,11 +1375,11 @@ export default function Home() {
                             prev.map((d) => (d.id === item.id ? { ...d, name: e.target.value } : d))
                           )
                         }
-                        placeholder="Ví dụ: Khóa luận, Báo cáo, Bài báo..."
+                        placeholder="e.g. Thesis, Report, Paper..."
                         className="input"
                       />
                     </Field>
-                    <Field label="Thời điểm deadline">
+                    <Field label="Deadline date & time">
                       <input
                         type="datetime-local"
                         value={toDatetimeLocal(item.deadline)}
@@ -1360,7 +1400,7 @@ export default function Home() {
                     type="button"
                     onClick={() => setDeadlineForm((prev) => prev.filter((d) => d.id !== item.id))}
                     className="text-slate-400 hover:text-red-600 p-2 rounded-md hover:bg-red-50 shrink-0"
-                    aria-label="Xóa deadline"
+                    aria-label="Delete deadline"
                   >
                     <Icon.Trash className="w-4 h-4" />
                   </button>
@@ -1376,7 +1416,7 @@ export default function Home() {
                 }
                 className="flex items-center gap-2 text-sm font-medium text-[#D96B1F] hover:underline"
               >
-                <Icon.Plus className="w-3.5 h-3.5" /> Thêm deadline
+                <Icon.Plus className="w-3.5 h-3.5" /> Add deadline
               </button>
             </div>
             <div className="flex gap-3 mt-6">
@@ -1385,7 +1425,7 @@ export default function Home() {
                 onClick={() => setDeadlineModalOpen(false)}
                 className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium"
               >
-                Hủy
+                Cancel
               </button>
               <button
                 type="button"
@@ -1400,7 +1440,7 @@ export default function Home() {
                 }}
                 className="flex-1 py-2.5 rounded-lg bg-[#D96B1F] text-white font-semibold hover:bg-[#c25f1a] text-sm"
               >
-                Lưu
+                Save
               </button>
             </div>
           </div>
@@ -1476,7 +1516,7 @@ export default function Home() {
                   </select>
                 </Field>
               </div>
-              <Field label="Số ngày dự kiến hoàn thành">
+              <Field label="Estimated days to complete">
                 <input
                   type="number"
                   min={0}
@@ -1484,13 +1524,13 @@ export default function Home() {
                   name="estimatedDays"
                   value={formData.estimatedDays}
                   onChange={handleInputChange}
-                  placeholder="Ví dụ: 5"
+                  placeholder="e.g. 5"
                   className="input"
                 />
               </Field>
               {estimatedDeadlinePreview && (
                 <p className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                  Deadline dự kiến:{" "}
+                  Estimated deadline:{" "}
                   <span className="font-semibold text-slate-800">{estimatedDeadlinePreview}</span>
                 </p>
               )}
