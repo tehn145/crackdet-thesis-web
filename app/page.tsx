@@ -1206,12 +1206,6 @@ export default function Home() {
                               <Icon.Pencil className="w-3.5 h-3.5" /> Edit
                             </button>
                             <button
-                              onClick={() => handleReassign(t)}
-                              className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-[#FDF1E7] text-slate-700"
-                            >
-                              <Icon.Mail className="w-3.5 h-3.5" /> Assign to {otherAssignee(t.assignee)}
-                            </button>
-                            <button
                               onClick={() => handleDelete(t)}
                               className="flex items-center gap-2 w-full text-left px-3 py-2 hover:bg-red-50 text-red-600"
                             >
