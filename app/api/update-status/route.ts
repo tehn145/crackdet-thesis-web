@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // dùng service role để webhook insert được
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 const transporter = nodemailer.createTransport({
@@ -15,7 +15,10 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const TO_EMAILS = ["ngokimthanh1455@gmail.com", "trancongthanh040205@gmail.com"];
+const TO_EMAILS = [
+  "ngokimthanh1455@gmail.com",
+  "trancongthanh040205@gmail.com",
+];
 
 async function sendMail(subject: string, html: string) {
   await transporter.sendMail({
@@ -38,12 +41,11 @@ export async function POST(request: Request) {
       const commits = payload.commits || [];
       const branch = payload.ref?.replace("refs/heads/", "") || "main";
 
-      // Tạo task tự động từ mỗi commit (hoặc gộp)
       const tasksToInsert = commits.map((c: any) => ({
         date: new Date().toISOString().split("T")[0],
         name: c.message?.split("\n")[0]?.slice(0, 120) || "GitHub commit",
         description: `Commit by ${c.author?.name || pusherName}\n\n${c.message}\n\nSHA: ${c.id}\nBranch: ${branch}`,
-        assignee: "Kim Thanh", // hoặc logic map theo author
+        assignee: "Kim Thanh",
         assigned_by: "GitHub Webhook",
         location: c.url || payload.repository?.html_url || "",
         status: "todo",
@@ -54,7 +56,6 @@ export async function POST(request: Request) {
         const { error } = await supabase.from("tasks").insert(tasksToInsert);
         if (error) {
           console.error("Supabase insert error:", error);
-          // vẫn gửi mail dù insert lỗi
         }
       }
 
@@ -74,10 +75,12 @@ export async function POST(request: Request) {
         `
       );
 
-      return NextResponse.json({ message: "GitHub processed + email sent + tasks created" });
+      return NextResponse.json({
+        message: "GitHub processed + email sent + tasks created",
+      });
     }
 
-    // ========== 2. Status / Assignment / Deadline ==========
+    // ========== 2. Status update ==========
     if (type === "status") {
       const { taskName, newStatus, user } = payload;
       await sendMail(
@@ -91,8 +94,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Status email sent" });
     }
 
+    // ========== 3. Assignment ==========
     if (type === "assignment") {
-      const { taskName, date, location, status, assignedTo, assignedBy } = payload;
+      const { taskName, date, location, status, assignedTo, assignedBy } =
+        payload;
       await sendMail(
         `[Phân công] ${assignedBy} đã giao task cho ${assignedTo}`,
         `
@@ -109,6 +114,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Assignment email sent" });
     }
 
+    // ========== 4. Deadline warning ==========
     if (type === "deadline-warning") {
       const { taskName, deadline, assignee } = payload;
       await sendMail(
@@ -116,7 +122,9 @@ export async function POST(request: Request) {
         `
           <h2>⚠️ Deadline sắp đến</h2>
           <p>Task <strong>"${taskName}"</strong> (assignee: ${assignee}) sắp đến hạn vào:</p>
-          <p style="font-size:1.2em;font-weight:bold;color:#c53030">${new Date(deadline).toLocaleString("vi-VN")}</p>
+          <p style="font-size:1.2em;font-weight:bold;color:#c53030">${new Date(
+            deadline
+          ).toLocaleString("vi-VN")}</p>
           <p>Hãy hoàn thành sớm nhé!</p>
         `
       );
@@ -126,5 +134,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unknown type" }, { status: 400 });
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: "Server error when sending mail / processing" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Server error when sending mail / processing" },
+      { status: 500 }
+    );
   }
+}
