@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 type Status = "todo" | "in-progress" | "done";
 type ViewMode = "dashboard" | "kanban" | "docs";
 type SortKey = "date-asc" | "date-desc" | "status" | "assignee";
+type TaskSource = "web" | "github";
 
 interface Task {
   id: number;
@@ -21,6 +22,8 @@ interface Task {
   estimatedDays?: number;
   deadline?: string;
   deadlineWarnedAt?: string;
+  /** Where this task originated. "github" = auto-imported from a GitHub push webhook. */
+  source: TaskSource;
 }
 
 type TaskFormData = {
@@ -174,6 +177,8 @@ const fromDb = (row: any): Task => ({
   estimatedDays: row.estimated_days ?? undefined,
   deadline: row.deadline ?? undefined,
   deadlineWarnedAt: row.deadline_warned_at ?? undefined,
+  // Older rows (or rows inserted before this column existed) default to "web".
+  source: (row.source as TaskSource) ?? "web",
 });
 
 /** Frontend → DB */
@@ -189,6 +194,7 @@ const toDb = (t: Partial<Task>) => ({
   deadline: t.deadline ?? null,
   deadline_warned_at: t.deadlineWarnedAt ?? null,
   updated_at: t.updatedAt ?? nowISO(),
+  source: t.source ?? "web",
 });
 
 const emptyForm = (currentUser: string): TaskFormData => ({
@@ -333,6 +339,11 @@ const Icon = {
       <circle cx="10" cy="13" r="1.2" fill="currentColor" />
     </svg>
   ),
+  Github: (p: { className?: string }) => (
+    <svg viewBox="0 0 20 20" fill="currentColor" className={p.className}>
+      <path d="M10 1.5a8.5 8.5 0 00-2.688 16.568c.425.078.58-.184.58-.409 0-.202-.008-.874-.012-1.585-2.36.513-2.858-1.001-2.858-1.001-.386-.98-.943-1.241-.943-1.241-.77-.527.058-.516.058-.516.852.06 1.301.876 1.301.876.757 1.297 1.986.922 2.47.705.076-.548.296-.922.539-1.134-1.884-.214-3.865-.943-3.865-4.196 0-.927.331-1.684.874-2.278-.088-.215-.379-1.078.083-2.246 0 0 .712-.228 2.333.87A8.13 8.13 0 0110 5.798c.721.003 1.448.098 2.126.288 1.62-1.098 2.331-.87 2.331-.87.463 1.168.172 2.031.084 2.246.545.594.873 1.351.873 2.278 0 3.261-1.984 3.98-3.874 4.19.304.263.575.78.575 1.572 0 1.135-.01 2.05-.01 2.329 0 .227.152.491.585.408A8.5 8.5 0 0010 1.5z" />
+    </svg>
+  ),
 };
 
 /* ------------------------------- Component ------------------------------- */
@@ -403,7 +414,17 @@ export default function Home() {
     loadData();
   }, []);
 
-  /* Realtime */
+  /*
+   * Realtime.
+   *
+   * IMPORTANT: this handler only re-fetches and sets local state — it must NEVER
+   * call sendStatusEmail / notifyAssignment / any /api/update-status request.
+   * Tasks auto-imported from the GitHub webhook are inserted directly into
+   * Supabase by the server route (see /api/github-webhook), which already sends
+   * exactly one summary email itself. If this effect also emailed on every
+   * change, every GitHub-imported task would trigger a second, duplicate email
+   * the moment it synced here. Keep this effect email-free.
+   */
   useEffect(() => {
     if (!hydrated) return;
 
@@ -659,6 +680,7 @@ export default function Home() {
           assignedBy:
             prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
           updatedAt: nowISO(),
+          source: prevTask?.source ?? "web",
         };
 
         const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", editingId);
@@ -679,6 +701,7 @@ export default function Home() {
           deadline: computedDeadline,
           assignedBy: currentUser,
           updatedAt: nowISO(),
+          source: "web" as const,
         };
 
         const { data, error } = await supabase
@@ -1156,7 +1179,17 @@ export default function Home() {
                         >
                           {t.date}
                         </span>
-                        <span className="font-semibold text-slate-900 truncate">{t.name}</span>
+                        <span className="font-semibold text-slate-900 truncate flex items-center gap-1.5">
+                          {t.name}
+                          {t.source === "github" && (
+                            <span
+                              title="Auto-imported from GitHub"
+                              className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5 shrink-0"
+                            >
+                              <Icon.Github className="w-2.5 h-2.5" /> GitHub
+                            </span>
+                          )}
+                        </span>
                         <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600 w-fit flex items-center gap-1">
                           {t.assignee}
                           {t.assignee === currentUser && (
@@ -1248,7 +1281,17 @@ export default function Home() {
                             t.assignee === currentUser ? "border-[#F0C39A]" : "border-slate-200"
                           }`}
                         >
-                          <p className="text-sm font-medium text-slate-900 mb-1.5">{t.name}</p>
+                          <p className="text-sm font-medium text-slate-900 mb-1.5 flex items-center gap-1.5">
+                            {t.name}
+                            {t.source === "github" && (
+                              <span
+                                title="Auto-imported from GitHub"
+                                className="inline-flex items-center gap-1 text-[9px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5 shrink-0"
+                              >
+                                <Icon.Github className="w-2.5 h-2.5" /> GitHub
+                              </span>
+                            )}
+                          </p>
                           {t.status !== "done" && deadlineInfo.level !== "none" && (
                             <span
                               className={`inline-block text-[10px] border px-2 py-0.5 rounded-full mb-1.5 ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}
