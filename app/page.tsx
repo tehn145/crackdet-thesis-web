@@ -351,7 +351,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
   const [onlyMine, setOnlyMine] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("date-desc"); // ← newest first
+  const [sortKey, setSortKey] = useState<SortKey>("date-desc");
   const [submitting, setSubmitting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; onUndo?: () => void } | null>(null);
@@ -625,12 +625,15 @@ export default function Home() {
     const estHoursTrim = formData.estimatedHours.trim();
     const estDaysNum = estDaysTrim === "" ? 0 : Number(estDaysTrim);
     const estHoursNum = estHoursTrim === "" ? 0 : Number(estHoursTrim);
+
     const safeDays = !Number.isNaN(estDaysNum) && estDaysNum > 0 ? estDaysNum : 0;
     const safeHours = !Number.isNaN(estHoursNum) && estHoursNum > 0 ? estHoursNum : 0;
-    const totalEstDays = safeDays + safeHours / 24;
-    const validEstDays = totalEstDays > 0 ? totalEstDays : undefined;
+
+    // Chuyển về phút và làm tròn LÊN
+    const totalMinutes = Math.ceil(safeDays * 24 * 60 + safeHours * 60);
+    const totalEstDays = totalMinutes > 0 ? totalMinutes / (24 * 60) : undefined;
     const computedDeadline =
-      validEstDays !== undefined ? computeDeadline(formData.date, validEstDays) : undefined;
+      totalEstDays !== undefined ? computeDeadline(formData.date, totalEstDays) : undefined;
 
     const cleaned = {
       date: formData.date,
@@ -649,7 +652,7 @@ export default function Home() {
         const updated: Task = {
           ...(prevTask as Task),
           ...cleaned,
-          estimatedDays: validEstDays,
+          estimatedDays: totalEstDays,
           deadline: computedDeadline,
           deadlineWarnedAt: deadlineChanged ? undefined : prevTask?.deadlineWarnedAt,
           assignedBy:
@@ -671,7 +674,7 @@ export default function Home() {
       } else {
         const newTaskData = {
           ...cleaned,
-          estimatedDays: validEstDays,
+          estimatedDays: totalEstDays,
           deadline: computedDeadline,
           assignedBy: currentUser,
           updatedAt: nowISO(),
@@ -706,14 +709,21 @@ export default function Home() {
 
   const handleEdit = (t: Task) => {
     setEditingId(t.id);
+
     let estimatedDaysStr = "";
     let estimatedHoursStr = "";
-    if (t.estimatedDays !== undefined) {
-      const wholeDays = Math.floor(t.estimatedDays);
-      const remHours = Math.round((t.estimatedDays - wholeDays) * 24);
+
+    if (t.estimatedDays !== undefined && t.estimatedDays > 0) {
+      // Chuyển fractional days → tổng phút (làm tròn lên)
+      const totalMinutes = Math.ceil(t.estimatedDays * 24 * 60);
+      const wholeDays = Math.floor(totalMinutes / (24 * 60));
+      const remainingMinutes = totalMinutes % (24 * 60);
+      const hours = remainingMinutes / 60; // có thể ra số lẻ
+
       estimatedDaysStr = wholeDays > 0 ? String(wholeDays) : "";
-      estimatedHoursStr = remHours > 0 ? String(remHours) : "";
+      estimatedHoursStr = hours > 0 ? String(Number(hours.toFixed(2))) : "";
     }
+
     setFormData({
       date: t.date,
       name: t.name,
@@ -731,14 +741,20 @@ export default function Home() {
 
   const estimatedDeadlinePreview = useMemo(() => {
     if (!formData.date) return null;
+
     const daysTrim = formData.estimatedDays.trim();
     const hoursTrim = formData.estimatedHours.trim();
     const daysNum = daysTrim === "" ? 0 : Number(daysTrim);
     const hoursNum = hoursTrim === "" ? 0 : Number(hoursTrim);
+
     if (Number.isNaN(daysNum) || Number.isNaN(hoursNum)) return null;
-    const totalDays = daysNum + hoursNum / 24;
-    if (totalDays <= 0) return null;
+
+    const totalMinutes = Math.ceil(daysNum * 24 * 60 + hoursNum * 60);
+    if (totalMinutes <= 0) return null;
+
+    const totalDays = totalMinutes / (24 * 60);
     const iso = computeDeadline(formData.date, totalDays);
+
     return new Date(iso).toLocaleString("en-US", {
       day: "2-digit",
       month: "2-digit",
@@ -846,7 +862,6 @@ export default function Home() {
         return list.sort((a, b) => a.assignee.localeCompare(b.assignee));
       case "date-desc":
       default:
-        // Newest first (by updatedAt)
         return list.sort((a, b) => {
           const timeA = new Date(a.updatedAt || a.date).getTime();
           const timeB = new Date(b.updatedAt || b.date).getTime();
@@ -1589,12 +1604,12 @@ export default function Home() {
                   <input
                     type="number"
                     min={0}
-                    max={23}
-                    step={1}
+                    max={23.99}
+                    step={0.01}
                     name="estimatedHours"
                     value={formData.estimatedHours}
                     onChange={handleInputChange}
-                    placeholder="e.g. 6"
+                    placeholder="e.g. 0.5"
                     className="input"
                   />
                 </Field>
