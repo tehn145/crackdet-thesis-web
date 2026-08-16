@@ -34,51 +34,89 @@ export async function POST(request: Request) {
     const payload = await request.json();
     const { type } = payload;
 
-    // ========== 1. GitHub Webhook ==========
-    if (type === "github" || payload.repository) {
-      const repoName = payload.repository?.name || "GitHub Repo";
-      const pusherName = payload.pusher?.name || "Someone";
-      const commits = payload.commits || [];
-      const branch = payload.ref?.replace("refs/heads/", "") || "main";
+// ========== GitHub Webhook ==========
+if (payload.repository || payload.pusher || payload.commits) {
+  const repoName = payload.repository?.name || "GitHub Repo";
+  const pusherName =
+    payload.pusher?.name ||
+    payload.pusher?.email ||
+    payload.sender?.login ||
+    "Someone";
+  const commits = payload.commits || [];
+  const branch = payload.ref?.replace("refs/heads/", "") || "main";
 
-      const tasksToInsert = commits.map((c: any) => ({
-        date: new Date().toISOString().split("T")[0],
-        name: c.message?.split("\n")[0]?.slice(0, 120) || "GitHub commit",
-        description: `Commit by ${c.author?.name || pusherName}\n\n${c.message}\n\nSHA: ${c.id}\nBranch: ${branch}`,
-        assignee: "Kim Thanh",
-        assigned_by: "GitHub Webhook",
-        location: c.url || payload.repository?.html_url || "",
-        status: "todo",
-        updated_at: new Date().toISOString(),
-      }));
+  console.log("Processing GitHub push:", {
+    repoName,
+    pusherName,
+    commitsCount: commits.length,
+  });
 
-      if (tasksToInsert.length > 0) {
-        const { error } = await supabase.from("tasks").insert(tasksToInsert);
-        if (error) {
-          console.error("Supabase insert error:", error);
-        }
-      }
+  // Map tên GitHub → tên trong hệ thống (có thể mở rộng)
+  const mapGithubUser = (name: string) => {
+    const lower = (name || "").toLowerCase();
+    if (lower.includes("kim") || lower.includes("thanh") || lower.includes("ngokim"))
+      return "Kim Thanh";
+    if (lower.includes("cong") || lower.includes("trancong"))
+      return "Cong Thanh";
+    return name || "Kim Thanh"; // fallback
+  };
 
-      const commitMessages = commits
-        .map((c: any) => `• ${c.message?.split("\n")[0] || "No message"}`)
-        .join("<br>");
+  const githubUser = mapGithubUser(pusherName);
 
-      await sendMail(
-        `[GitHub] ${pusherName} pushed to ${repoName}`,
-        `
-          <h2>${pusherName} vừa push code mới lên GitHub</h2>
-          <p><strong>Repo:</strong> ${repoName} (${branch})</p>
-          <p><strong>Các thay đổi:</strong></p>
-          <p>${commitMessages || "Không có commit message"}</p>
-          <br/>
-          <p>Task đã được tự động thêm vào Thesis Tracker. Vào web kiểm tra và cập nhật trạng thái nhé!</p>
-        `
+  const tasksToInsert = commits.map((c: any) => {
+    const authorName = c.author?.name || c.author?.username || pusherName;
+    const mappedAuthor = mapGithubUser(authorName);
+
+    return {
+      date: new Date().toISOString().split("T")[0],
+      name: (c.message?.split("\n")[0] || "GitHub commit").slice(0, 120),
+      description: `Commit by ${authorName}\n\n${c.message || ""}\n\nSHA: ${c.id}\nBranch: ${branch}`,
+      assignee: mappedAuthor,                    // user trên GitHub
+      assigned_by: "GitHub",                     // nguồn = GitHub
+      location: c.url || payload.repository?.html_url || "",
+      status: "done",                            // ← completed
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  if (tasksToInsert.length > 0) {
+    const { data, error } = await supabase
+      .from("tasks")
+      .insert(tasksToInsert)
+      .select();
+
+    if (error) {
+      console.error("Supabase insert error:", error);
+      return NextResponse.json(
+        { error: "Supabase insert failed", details: error.message },
+        { status: 500 }
       );
-
-      return NextResponse.json({
-        message: "GitHub processed + email sent + tasks created",
-      });
     }
+    console.log("Inserted tasks:", data?.length);
+  }
+
+  const commitMessages = commits
+    .map((c: any) => `• ${(c.message || "No message").split("\n")[0]}`)
+    .join("<br>");
+
+  await sendMail(
+    `[GitHub] ${pusherName} pushed to ${repoName}`,
+    `
+      <h2>${pusherName} vừa push code mới lên GitHub</h2>
+      <p><strong>Repo:</strong> ${repoName} (${branch})</p>
+      <p><strong>Các thay đổi:</strong></p>
+      <p>${commitMessages || "Không có commit message"}</p>
+      <br/>
+      <p>Task đã được tự động thêm (status: Completed) vào Thesis Tracker.</p>
+    `
+  );
+
+  return NextResponse.json({
+    ok: true,
+    message: "GitHub processed + email sent + tasks created",
+    inserted: tasksToInsert.length,
+  });
+}
 
     // ========== 2. Status update ==========
     if (type === "status") {

@@ -7,7 +7,6 @@ import { supabase } from "@/lib/supabase";
 type Status = "todo" | "in-progress" | "done";
 type ViewMode = "dashboard" | "kanban" | "docs";
 type SortKey = "date-asc" | "date-desc" | "status" | "assignee";
-type TaskSource = "web" | "github";
 
 interface Task {
   id: number;
@@ -22,8 +21,6 @@ interface Task {
   estimatedDays?: number;
   deadline?: string;
   deadlineWarnedAt?: string;
-  /** Where this task originated. "github" = auto-imported from a GitHub push webhook. */
-  source: TaskSource;
 }
 
 type TaskFormData = {
@@ -107,7 +104,9 @@ const formatCountdownClock = (ms: number): string => {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   const pad = (n: number) => String(n).padStart(2, "0");
-  return days > 0 ? `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}` : `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+  return days > 0
+    ? `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+    : `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 };
 
 const DEADLINE_LEVEL_STYLE: Record<DeadlineLevel, string> = {
@@ -127,13 +126,6 @@ const getTaskDeadlineInfo = (t: Task, now: number): { level: DeadlineLevel; text
   if (diff <= 6 * 60 * 60 * 1000) return { level: "urgent", text: `${formatDuration(diff)} left` };
   if (diff <= 24 * 60 * 60 * 1000) return { level: "warning", text: `${formatDuration(diff)} left` };
   return { level: "safe", text: `${formatDuration(diff)} left` };
-};
-
-const getDiffLevel = (diff: number): DeadlineLevel => {
-  if (diff <= 0) return "overdue";
-  if (diff <= 6 * 60 * 60 * 1000) return "urgent";
-  if (diff <= 24 * 60 * 60 * 1000) return "warning";
-  return "safe";
 };
 
 const toDatetimeLocal = (iso?: string): string => {
@@ -177,8 +169,6 @@ const fromDb = (row: any): Task => ({
   estimatedDays: row.estimated_days ?? undefined,
   deadline: row.deadline ?? undefined,
   deadlineWarnedAt: row.deadline_warned_at ?? undefined,
-  // Older rows (or rows inserted before this column existed) default to "web".
-  source: (row.source as TaskSource) ?? "web",
 });
 
 /** Frontend → DB */
@@ -194,7 +184,6 @@ const toDb = (t: Partial<Task>) => ({
   deadline: t.deadline ?? null,
   deadline_warned_at: t.deadlineWarnedAt ?? null,
   updated_at: t.updatedAt ?? nowISO(),
-  source: t.source ?? "web",
 });
 
 const emptyForm = (currentUser: string): TaskFormData => ({
@@ -339,11 +328,6 @@ const Icon = {
       <circle cx="10" cy="13" r="1.2" fill="currentColor" />
     </svg>
   ),
-  Github: (p: { className?: string }) => (
-    <svg viewBox="0 0 20 20" fill="currentColor" className={p.className}>
-      <path d="M10 1.5a8.5 8.5 0 00-2.688 16.568c.425.078.58-.184.58-.409 0-.202-.008-.874-.012-1.585-2.36.513-2.858-1.001-2.858-1.001-.386-.98-.943-1.241-.943-1.241-.77-.527.058-.516.058-.516.852.06 1.301.876 1.301.876.757 1.297 1.986.922 2.47.705.076-.548.296-.922.539-1.134-1.884-.214-3.865-.943-3.865-4.196 0-.927.331-1.684.874-2.278-.088-.215-.379-1.078.083-2.246 0 0 .712-.228 2.333.87A8.13 8.13 0 0110 5.798c.721.003 1.448.098 2.126.288 1.62-1.098 2.331-.87 2.331-.87.463 1.168.172 2.031.084 2.246.545.594.873 1.351.873 2.278 0 3.261-1.984 3.98-3.874 4.19.304.263.575.78.575 1.572 0 1.135-.01 2.05-.01 2.329 0 .227.152.491.585.408A8.5 8.5 0 0010 1.5z" />
-    </svg>
-  ),
 };
 
 /* ------------------------------- Component ------------------------------- */
@@ -367,7 +351,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
   const [onlyMine, setOnlyMine] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("date-asc");
+  const [sortKey, setSortKey] = useState<SortKey>("date-desc"); // ← newest first
   const [submitting, setSubmitting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; onUndo?: () => void } | null>(null);
@@ -381,7 +365,7 @@ export default function Home() {
         const { data: tasksData, error: tasksError } = await supabase
           .from("tasks")
           .select("*")
-          .order("date", { ascending: true });
+          .order("updated_at", { ascending: false });
 
         if (tasksError) throw tasksError;
         setTasks((tasksData ?? []).map(fromDb));
@@ -414,17 +398,7 @@ export default function Home() {
     loadData();
   }, []);
 
-  /*
-   * Realtime.
-   *
-   * IMPORTANT: this handler only re-fetches and sets local state — it must NEVER
-   * call sendStatusEmail / notifyAssignment / any /api/update-status request.
-   * Tasks auto-imported from the GitHub webhook are inserted directly into
-   * Supabase by the server route (see /api/github-webhook), which already sends
-   * exactly one summary email itself. If this effect also emailed on every
-   * change, every GitHub-imported task would trigger a second, duplicate email
-   * the moment it synced here. Keep this effect email-free.
-   */
+  /* Realtime */
   useEffect(() => {
     if (!hydrated) return;
 
@@ -434,7 +408,10 @@ export default function Home() {
         "postgres_changes",
         { event: "*", schema: "public", table: "tasks" },
         async () => {
-          const { data } = await supabase.from("tasks").select("*").order("date");
+          const { data } = await supabase
+            .from("tasks")
+            .select("*")
+            .order("updated_at", { ascending: false });
           if (data) setTasks(data.map(fromDb));
         }
       )
@@ -484,9 +461,7 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [unlocked]);
 
-  /* Deadline warning email
-     - Tasks whose total estimated duration (date → deadline) is under 1 day: warn 30 minutes before the deadline.
-     - Tasks whose total estimated duration is 1 day or more: warn 6 hours before the deadline (previous behavior). */
+  /* Deadline warning email */
   useEffect(() => {
     if (!hydrated) return;
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -680,7 +655,6 @@ export default function Home() {
           assignedBy:
             prevTask && prevTask.assignee === cleaned.assignee ? prevTask.assignedBy : currentUser,
           updatedAt: nowISO(),
-          source: prevTask?.source ?? "web",
         };
 
         const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", editingId);
@@ -701,7 +675,6 @@ export default function Home() {
           deadline: computedDeadline,
           assignedBy: currentUser,
           updatedAt: nowISO(),
-          source: "web" as const,
         };
 
         const { data, error } = await supabase
@@ -713,7 +686,7 @@ export default function Home() {
         if (error) throw error;
 
         const newTask = fromDb(data);
-        setTasks((prev) => [...prev, newTask]);
+        setTasks((prev) => [newTask, ...prev]);
         await sendStatusEmail(cleaned.name, "Added", cleaned.assignee);
         const emailed = await notifyAssignment(newTask, undefined);
         showToast(
@@ -800,7 +773,7 @@ export default function Home() {
     sendStatusEmail(t.name, "Deleted", t.assignee);
     showToast(`Deleted "${t.name}"`, async () => {
       const { data } = await supabase.from("tasks").insert(toDb(t)).select().single();
-      if (data) setTasks((prev) => [...prev, fromDb(data)]);
+      if (data) setTasks((prev) => [fromDb(data), ...prev]);
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
       setToast(null);
     });
@@ -817,7 +790,9 @@ export default function Home() {
       return;
     }
 
-    setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, status, updatedAt: nowISO() } : x)));
+    setTasks((prev) =>
+      prev.map((x) => (x.id === t.id ? { ...x, status, updatedAt: nowISO() } : x))
+    );
     await sendStatusEmail(t.name, STATUS_META[status].label, t.assignee);
   };
 
@@ -852,17 +827,31 @@ export default function Home() {
     const list = tasks
       .filter((t) => (statusFilter === "all" ? true : t.status === statusFilter))
       .filter((t) => (onlyMine ? t.assignee === currentUser : true))
-      .filter((t) => !q || t.name.toLowerCase().includes(q) || t.assignee.toLowerCase().includes(q));
-    const byStatus = (a: Task, b: Task) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status);
+      .filter(
+        (t) =>
+          !q ||
+          t.name.toLowerCase().includes(q) ||
+          t.assignee.toLowerCase().includes(q)
+      );
+
+    const byStatus = (a: Task, b: Task) =>
+      STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status);
+
     switch (sortKey) {
-      case "date-desc":
-        return list.sort((a, b) => b.date.localeCompare(a.date));
+      case "date-asc":
+        return list.sort((a, b) => a.date.localeCompare(b.date));
       case "status":
         return list.sort(byStatus);
       case "assignee":
         return list.sort((a, b) => a.assignee.localeCompare(b.assignee));
+      case "date-desc":
       default:
-        return list.sort((a, b) => a.date.localeCompare(b.date));
+        // Newest first (by updatedAt)
+        return list.sort((a, b) => {
+          const timeA = new Date(a.updatedAt || a.date).getTime();
+          const timeB = new Date(b.updatedAt || b.date).getTime();
+          return timeB - timeA;
+        });
     }
   }, [tasks, statusFilter, onlyMine, currentUser, query, sortKey]);
 
@@ -961,7 +950,6 @@ export default function Home() {
           </p>
         </div>
 
-        {/* User info (fixed, not selectable) */}
         <div className="mb-6 pb-4 border-b border-slate-200">
           <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide mb-1.5">
             You are
@@ -990,7 +978,8 @@ export default function Home() {
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 flex justify-around py-2 shadow-[0_-1px_8px_rgba(0,0,0,0.04)]">
         {(["dashboard", "kanban", "docs"] as ViewMode[]).map((id) => {
-          const IconCmp = id === "dashboard" ? Icon.Dashboard : id === "kanban" ? Icon.Kanban : Icon.Docs;
+          const IconCmp =
+            id === "dashboard" ? Icon.Dashboard : id === "kanban" ? Icon.Kanban : Icon.Docs;
           return (
             <button
               key={id}
@@ -1007,12 +996,17 @@ export default function Home() {
         <div className="flex flex-wrap items-end justify-between gap-4 mb-2">
           <div>
             <p className="font-mono text-xs text-slate-400 uppercase tracking-wider mb-1">
-              {view === "dashboard" ? "Overview" : view === "kanban" ? "Task Board" : "Document Library"}
+              {view === "dashboard"
+                ? "Overview"
+                : view === "kanban"
+                ? "Task Board"
+                : "Document Library"}
             </p>
-            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">Thesis Progress Tracker</h2>
+            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900">
+              Thesis Progress Tracker
+            </h2>
           </div>
           <div className="flex items-center gap-2">
-            {/* Mobile: show user name */}
             <div className="md:hidden flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium">
               {currentUser}
             </div>
@@ -1035,7 +1029,11 @@ export default function Home() {
                   : "bg-white border-slate-200 text-slate-400 hover:border-[#D96B1F]"
               }`}
             >
-              <span className={`text-[9px] font-mono uppercase tracking-wide ${nearestDeadline ? "opacity-90" : "opacity-70"}`}>
+              <span
+                className={`text-[9px] font-mono uppercase tracking-wide ${
+                  nearestDeadline ? "opacity-90" : "opacity-70"
+                }`}
+              >
                 Deadline
               </span>
               {nearestDeadline ? (
@@ -1067,7 +1065,9 @@ export default function Home() {
           <div className="bg-white border border-slate-200 rounded-2xl p-6 flex items-center gap-5 shadow-sm">
             <div
               className="relative w-20 h-20 rounded-full grid place-items-center shrink-0"
-              style={{ background: `conic-gradient(#10B981 ${stats.pct * 3.6}deg, #E5E7EB 0deg)` }}
+              style={{
+                background: `conic-gradient(#10B981 ${stats.pct * 3.6}deg, #E5E7EB 0deg)`,
+              }}
             >
               <div className="w-14 h-14 rounded-full bg-white grid place-items-center font-mono">
                 <span className="text-sm font-bold text-slate-900">{stats.pct}%</span>
@@ -1154,6 +1154,7 @@ export default function Home() {
               <ul className="divide-y divide-slate-100">
                 {filteredTasks.map((t, i) => {
                   const deadlineInfo = getTaskDeadlineInfo(t, nowTick);
+                  const isGithub = t.assignedBy === "GitHub";
                   return (
                     <li
                       key={t.id}
@@ -1179,17 +1180,7 @@ export default function Home() {
                         >
                           {t.date}
                         </span>
-                        <span className="font-semibold text-slate-900 truncate flex items-center gap-1.5">
-                          {t.name}
-                          {t.source === "github" && (
-                            <span
-                              title="Auto-imported from GitHub"
-                              className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5 shrink-0"
-                            >
-                              <Icon.Github className="w-2.5 h-2.5" /> GitHub
-                            </span>
-                          )}
-                        </span>
+                        <span className="font-semibold text-slate-900 truncate">{t.name}</span>
                         <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600 w-fit flex items-center gap-1">
                           {t.assignee}
                           {t.assignee === currentUser && (
@@ -1208,8 +1199,18 @@ export default function Home() {
                             {deadlineInfo.text}
                           </span>
                         )}
-                        <span className="md:col-span-5 text-[11px] text-slate-400 font-mono truncate">
-                          {t.location && <>↳ {t.location} · </>}Assigned by {t.assignedBy}
+                        <span className="md:col-span-5 text-[11px] text-slate-400 font-mono truncate flex items-center gap-2 flex-wrap">
+                          {t.location && <span>↳ {t.location}</span>}
+                          <span>· Assigned by {t.assignedBy}</span>
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                              isGithub
+                                ? "bg-slate-800 text-white border-slate-700"
+                                : "bg-slate-100 text-slate-600 border-slate-200"
+                            }`}
+                          >
+                            {isGithub ? "GitHub" : "Web"}
+                          </span>
                         </span>
                       </div>
                       <div
@@ -1264,16 +1265,21 @@ export default function Home() {
                 <div key={status} className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
                   <div className="flex items-center gap-2 mb-4">
                     <span className={`w-2 h-2 rounded-full ${STATUS_META[status].dot}`} />
-                    <h3 className="text-sm font-semibold text-slate-700">{STATUS_META[status].label}</h3>
+                    <h3 className="text-sm font-semibold text-slate-700">
+                      {STATUS_META[status].label}
+                    </h3>
                     <span className="ml-auto font-mono text-xs text-slate-400">{items.length}</span>
                   </div>
                   <div className="space-y-3 min-h-[60px]">
-                    {items.length === 0 && <p className="text-xs text-slate-400 italic px-1">No tasks</p>}
+                    {items.length === 0 && (
+                      <p className="text-xs text-slate-400 italic px-1">No tasks</p>
+                    )}
                     {items.map((t) => {
                       const idx = STATUS_ORDER.indexOf(status);
                       const prev = STATUS_ORDER[idx - 1];
                       const next = STATUS_ORDER[idx + 1];
                       const deadlineInfo = getTaskDeadlineInfo(t, nowTick);
+                      const isGithub = t.assignedBy === "GitHub";
                       return (
                         <div
                           key={t.id}
@@ -1281,17 +1287,18 @@ export default function Home() {
                             t.assignee === currentUser ? "border-[#F0C39A]" : "border-slate-200"
                           }`}
                         >
-                          <p className="text-sm font-medium text-slate-900 mb-1.5 flex items-center gap-1.5">
-                            {t.name}
-                            {t.source === "github" && (
-                              <span
-                                title="Auto-imported from GitHub"
-                                className="inline-flex items-center gap-1 text-[9px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5 shrink-0"
-                              >
-                                <Icon.Github className="w-2.5 h-2.5" /> GitHub
-                              </span>
-                            )}
-                          </p>
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                            <p className="text-sm font-medium text-slate-900">{t.name}</p>
+                            <span
+                              className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                                isGithub
+                                  ? "bg-slate-800 text-white border-slate-700"
+                                  : "bg-slate-100 text-slate-600 border-slate-200"
+                              }`}
+                            >
+                              {isGithub ? "GitHub" : "Web"}
+                            </span>
+                          </div>
                           {t.status !== "done" && deadlineInfo.level !== "none" && (
                             <span
                               className={`inline-block text-[10px] border px-2 py-0.5 rounded-full mb-1.5 ${DEADLINE_LEVEL_STYLE[deadlineInfo.level]}`}
