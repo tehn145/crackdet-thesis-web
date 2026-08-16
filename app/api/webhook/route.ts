@@ -8,11 +8,26 @@ import { createClient } from '@supabase/supabase-js';
  * Security only allows the anon key to read. Add SUPABASE_SERVICE_ROLE_KEY
  * to your server env vars (Vercel/host), separate from the anon key used in
  * lib/supabase.ts on the client.
+ *
+ * Built lazily (inside getSupabaseAdmin) instead of at module load time so a
+ * missing env var during `next build` doesn't crash the build with
+ * "supabaseKey is required" — it will only throw at request time if the env
+ * var is genuinely missing, which is easier to diagnose from runtime logs.
  */
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+let _supabaseAdmin: ReturnType<typeof createClient> | null = null;
+function getSupabaseAdmin() {
+  if (!_supabaseAdmin) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) {
+      throw new Error(
+        'Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env var'
+      );
+    }
+    _supabaseAdmin = createClient(url, key);
+  }
+  return _supabaseAdmin;
+}
 
 // Map a GitHub username/login to one of the two thesis members so the
 // auto-created task is assigned to someone real. Fill in the actual GitHub
@@ -63,7 +78,7 @@ export async function POST(request: Request) {
     // 1) Insert directly into Supabase. The web page is subscribed to
     //    realtime changes on `tasks`, so this makes the task appear on the
     //    tracker automatically — no manual "Add Task" click needed.
-    const { data: inserted, error } = await supabaseAdmin
+    const { data: inserted, error } = await getSupabaseAdmin()
       .from('tasks')
       .insert(newTaskRows)
       .select();
