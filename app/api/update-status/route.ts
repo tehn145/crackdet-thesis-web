@@ -117,91 +117,94 @@ export async function POST(request: Request) {
     const payload = await request.json();
     console.log("=== Received payload ===", Object.keys(payload));
 
-    // ========== 1. GitHub Webhook ==========
-    if (payload.repository || payload.pusher || payload.commits) {
-      const repoName = payload.repository?.name || "GitHub Repo";
-      const pusherName =
-        payload.pusher?.name ||
-        payload.pusher?.email ||
-        payload.sender?.login ||
-        "Someone";
-      const commits = payload.commits || [];
-      const branch = payload.ref?.replace("refs/heads/", "") || "main";
+// ========== 1. GitHub Webhook ==========
+if (payload.repository || payload.pusher || payload.commits) {
+  const repoName = payload.repository?.name || "GitHub Repo";
+  const pusherName =
+    payload.pusher?.name ||
+    payload.pusher?.email ||
+    payload.sender?.login ||
+    "Someone";
+  const commits = payload.commits || [];
+  const branch = payload.ref?.replace("refs/heads/", "") || "main";
 
-      const mapGithubUser = (name: string) => {
-        const lower = (name || "").toLowerCase();
-        if (lower.includes("kim") || lower.includes("thanh") || lower.includes("ngokim"))
-          return "Kim Thanh";
-        if (lower.includes("cong") || lower.includes("trancong"))
-          return "Cong Thanh";
-        return name || "Kim Thanh";
-      };
+  // Lấy username GitHub thật (không map sang Kim Thanh / Cong Thanh)
+  const getGithubUsername = (c: any) => {
+    return (
+      c.author?.username ||
+      c.author?.name ||
+      c.committer?.username ||
+      c.committer?.name ||
+      payload.pusher?.name ||
+      payload.sender?.login ||
+      "github-user"
+    );
+  };
 
-      const tasksToInsert = commits.map((c: any) => {
-        const authorName = c.author?.name || c.author?.username || pusherName;
-        const mappedAuthor = mapGithubUser(authorName);
+  const tasksToInsert = commits.map((c: any) => {
+    const githubUser = getGithubUsername(c);
 
-        return {
-          date: new Date().toISOString().split("T")[0],
-          name: (c.message?.split("\n")[0] || "GitHub commit").slice(0, 120),
-          description: `Commit by ${authorName}\n\n${c.message || ""}\n\nSHA: ${c.id}\nBranch: ${branch}`,
-          assignee: mappedAuthor,
-          assigned_by: "GitHub",
-          location: c.url || payload.repository?.html_url || "",
-          status: "done",
-          updated_at: new Date().toISOString(),
-        };
-      });
+    return {
+      date: new Date().toISOString().split("T")[0],
+      name: (c.message?.split("\n")[0] || "GitHub commit").slice(0, 120),
+      description: `Commit by ${githubUser}\n\n${c.message || ""}\n\nSHA: ${c.id}\nBranch: ${branch}`,
+      assignee: githubUser,          // ← hiển thị đúng username GitHub (vd: tehn145)
+      assigned_by: "GitHub",
+      location: c.url || payload.repository?.html_url || "",
+      status: "done",
+      updated_at: new Date().toISOString(),
+    };
+  });
 
-      if (tasksToInsert.length > 0) {
-        const { error } = await supabase.from("tasks").insert(tasksToInsert);
-        if (error) {
-          console.error("Supabase insert error:", error);
-          return NextResponse.json(
-            { error: "Supabase insert failed", details: error.message },
-            { status: 500 }
-          );
-        }
-      }
-
-      const commitList = commits
-        .map(
-          (c: any) =>
-            `<tr>
-              <td style="padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155;">
-                • ${(c.message || "No message").split("\n")[0]}
-              </td>
-            </tr>`
-        )
-        .join("");
-
-      const html = buildEmailHtml({
-        title: "New GitHub Push",
-        badge: "GitHub",
-        content: `
-          <p style="margin:0 0 16px;font-size:15px;color:#334155;line-height:1.6;">
-            <strong>${pusherName}</strong> vừa push code mới lên repository <strong>${repoName}</strong> (branch: <code>${branch}</code>).
-          </p>
-          <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">
-            Commits
-          </p>
-          <table width="100%" cellpadding="0" cellspacing="0">
-            ${commitList || "<tr><td style='font-size:13px;color:#94a3b8;'>Không có commit message</td></tr>"}
-          </table>
-          <p style="margin:20px 0 0;font-size:14px;color:#64748b;">
-            Các task đã được tự động thêm vào tracker với trạng thái <strong>Completed</strong>.
-          </p>
-        `,
-      });
-
-      await sendMail(`[Crack Detection] ${pusherName} pushed to ${repoName}`, html);
-
-      return NextResponse.json({
-        ok: true,
-        message: "GitHub processed + email sent + tasks created",
-        inserted: tasksToInsert.length,
-      });
+  if (tasksToInsert.length > 0) {
+    const { error } = await supabase.from("tasks").insert(tasksToInsert);
+    if (error) {
+      console.error("Supabase insert error:", error);
+      return NextResponse.json(
+        { error: "Supabase insert failed", details: error.message },
+        { status: 500 }
+      );
     }
+  }
+
+  const commitList = commits
+    .map(
+      (c: any) =>
+        `<tr>
+          <td style="padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155;">
+            • ${(c.message || "No message").split("\n")[0]}
+          </td>
+        </tr>`
+    )
+    .join("");
+
+  const html = buildEmailHtml({
+    title: "New GitHub Push",
+    badge: "GitHub",
+    content: `
+      <p style="margin:0 0 16px;font-size:15px;color:#334155;line-height:1.6;">
+        <strong>${pusherName}</strong> vừa push code mới lên repository <strong>${repoName}</strong> (branch: <code>${branch}</code>).
+      </p>
+      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">
+        Commits
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${commitList || "<tr><td style='font-size:13px;color:#94a3b8;'>Không có commit message</td></tr>"}
+      </table>
+      <p style="margin:20px 0 0;font-size:14px;color:#64748b;">
+        Các task đã được tự động thêm vào tracker với trạng thái <strong>Completed</strong>.
+      </p>
+    `,
+  });
+
+  await sendMail(`[Crack Detection] ${pusherName} pushed to ${repoName}`, html);
+
+  return NextResponse.json({
+    ok: true,
+    message: "GitHub processed + email sent + tasks created",
+    inserted: tasksToInsert.length,
+  });
+}
 
     // ========== 2. Status update ==========
     if (payload.type === "status") {
