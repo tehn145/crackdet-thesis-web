@@ -24,14 +24,122 @@ const WEB_URL = "https://crackdet-thesis-web.vercel.app"; // ← đổi nếu do
 const THESIS_TITLE =
   "Deep Learning-Based Surface Damage Detection and Classification for Civil Infrastructure";
 
+// ========== Helpers ==========
+
+function escapeHtml(str: string) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatEstimated(days: number | null | undefined): string {
+  if (days == null || Number.isNaN(Number(days))) return "—";
+  const d = Number(days);
+  const whole = Math.floor(d);
+  const hours = Math.round((d % 1) * 24);
+  const parts: string[] = [];
+  if (whole > 0) parts.push(`${whole}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  return parts.length ? parts.join(" ") : "—";
+}
+
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("vi-VN", {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(iso);
+  }
+}
+
+/** Shared task-detail card — same fields as on the web details modal */
+function buildTaskDetailsCard(task: {
+  taskName?: string;
+  description?: string;
+  date?: string;
+  location?: string;
+  status?: string;
+  assignee?: string;
+  assignedBy?: string;
+  estimatedDays?: number | null;
+  deadline?: string | null;
+  updatedAt?: string;
+  newStatus?: string;
+}) {
+  const name = escapeHtml(task.taskName || "Untitled task");
+  const description = task.description?.trim()
+    ? escapeHtml(task.description).replace(/\n/g, "<br/>")
+    : null;
+  const date = escapeHtml(task.date || "—");
+  const status = escapeHtml(task.newStatus || task.status || "—");
+  const assignee = escapeHtml(task.assignee || "—");
+  const assignedBy = escapeHtml(task.assignedBy || "—");
+  const estimated = formatEstimated(task.estimatedDays ?? null);
+  const deadline = task.deadline ? formatDateTime(task.deadline) : "—";
+  const location = task.location?.trim() || "";
+  const locationHtml = location
+    ? /^https?:\/\//i.test(location)
+      ? `<a href="${escapeHtml(location)}" style="color:#D96B1F;text-decoration:underline;word-break:break-all;">${escapeHtml(location)}</a>`
+      : escapeHtml(location)
+    : "—";
+  const updatedAt = task.updatedAt ? formatDateTime(task.updatedAt) : null;
+
+  const row = (label: string, value: string) => `
+    <tr>
+      <td style="padding:12px 16px;border-bottom:1px solid #e2e8f0;width:34%;vertical-align:top;">
+        <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;font-weight:600;">${label}</p>
+      </td>
+      <td style="padding:12px 16px;border-bottom:1px solid #e2e8f0;vertical-align:top;">
+        <p style="margin:0;font-size:14px;color:#0f172a;line-height:1.45;">${value}</p>
+      </td>
+    </tr>`;
+
+  return `
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-top:8px;">
+      <div style="padding:16px 18px;background:#fff;border-bottom:1px solid #e2e8f0;">
+        <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Task</p>
+        <p style="margin:0;font-size:17px;font-weight:700;color:#0f172a;line-height:1.35;">${name}</p>
+      </div>
+      ${
+        description
+          ? `<div style="padding:14px 18px;border-bottom:1px solid #e2e8f0;background:#fff;">
+              <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px;font-weight:600;">Description</p>
+              <p style="margin:0;font-size:14px;color:#334155;line-height:1.55;">${description}</p>
+            </div>`
+          : ""
+      }
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;">
+        ${row("Status", status)}
+        ${row("Assignee", assignee)}
+        ${row("Assigned by", assignedBy)}
+        ${row("Date", date)}
+        ${row("Estimated", estimated)}
+        ${row("Deadline", deadline)}
+        ${row("Location / Link", locationHtml)}
+        ${updatedAt ? row("Last updated", updatedAt) : ""}
+      </table>
+    </div>
+  `;
+}
+
 // ========== Email Template ==========
 function buildEmailHtml(options: {
   title: string;
   badge?: string;
   badgeColor?: string;
+  intro?: string;
   content: string;
 }) {
-  const { title, badge, badgeColor = "#D96B1F", content } = options;
+  const { title, badge, content, intro } = options;
 
   return `
 <!DOCTYPE html>
@@ -67,6 +175,11 @@ function buildEmailHtml(options: {
           <!-- Body -->
           <tr>
             <td style="padding:32px;">
+              ${
+                intro
+                  ? `<p style="margin:0 0 18px;font-size:15px;color:#334155;line-height:1.6;">${intro}</p>`
+                  : ""
+              }
               ${content}
               
               <!-- CTA Button -->
@@ -75,7 +188,7 @@ function buildEmailHtml(options: {
                   <td align="center">
                     <a href="${WEB_URL}" 
                        style="display:inline-block;padding:12px 28px;background:#D96B1F;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;border-radius:8px;">
-                      Crack-Detection Progress →
+                      Open Thesis Tracker →
                     </a>
                   </td>
                 </tr>
@@ -117,94 +230,87 @@ export async function POST(request: Request) {
     const payload = await request.json();
     console.log("=== Received payload ===", Object.keys(payload));
 
-// ========== 1. GitHub Webhook ==========
-if (payload.repository || payload.pusher || payload.commits) {
-  const repoName = payload.repository?.name || "GitHub Repo";
-  const pusherName =
-    payload.pusher?.name ||
-    payload.pusher?.email ||
-    payload.sender?.login ||
-    "Someone";
-  const commits = payload.commits || [];
-  const branch = payload.ref?.replace("refs/heads/", "") || "main";
+    // ========== 1. GitHub Webhook ==========
+    if (payload.repository || payload.pusher || payload.commits) {
+      const repoName = payload.repository?.name || "GitHub Repo";
+      const pusherName =
+        payload.pusher?.name ||
+        payload.pusher?.email ||
+        payload.sender?.login ||
+        "Someone";
+      const commits = payload.commits || [];
+      const branch = payload.ref?.replace("refs/heads/", "") || "main";
 
-  // Lấy username GitHub thật (không map sang Kim Thanh / Cong Thanh)
-  const getGithubUsername = (c: any) => {
-    return (
-      c.author?.username ||
-      c.author?.name ||
-      c.committer?.username ||
-      c.committer?.name ||
-      payload.pusher?.name ||
-      payload.sender?.login ||
-      "github-user"
-    );
-  };
+      const getGithubUsername = (c: any) => {
+        return (
+          c.author?.username ||
+          c.author?.name ||
+          c.committer?.username ||
+          c.committer?.name ||
+          payload.pusher?.name ||
+          payload.sender?.login ||
+          "github-user"
+        );
+      };
 
-  const tasksToInsert = commits.map((c: any) => {
-    const githubUser = getGithubUsername(c);
+      const tasksToInsert = commits.map((c: any) => {
+        const githubUser = getGithubUsername(c);
+        return {
+          date: new Date().toISOString().split("T")[0],
+          name: (c.message?.split("\n")[0] || "GitHub commit").slice(0, 120),
+          description: `Commit by ${githubUser}\n\n${c.message || ""}\n\nSHA: ${c.id}\nBranch: ${branch}`,
+          assignee: githubUser,
+          assigned_by: "GitHub",
+          location: c.url || payload.repository?.html_url || "",
+          status: "done",
+          updated_at: new Date().toISOString(),
+        };
+      });
 
-    return {
-      date: new Date().toISOString().split("T")[0],
-      name: (c.message?.split("\n")[0] || "GitHub commit").slice(0, 120),
-      description: `Commit by ${githubUser}\n\n${c.message || ""}\n\nSHA: ${c.id}\nBranch: ${branch}`,
-      assignee: githubUser,          // ← hiển thị đúng username GitHub (vd: tehn145)
-      assigned_by: "GitHub",
-      location: c.url || payload.repository?.html_url || "",
-      status: "done",
-      updated_at: new Date().toISOString(),
-    };
-  });
+      if (tasksToInsert.length > 0) {
+        const { error } = await supabase.from("tasks").insert(tasksToInsert);
+        if (error) {
+          console.error("Supabase insert error:", error);
+          return NextResponse.json(
+            { error: "Supabase insert failed", details: error.message },
+            { status: 500 }
+          );
+        }
+      }
 
-  if (tasksToInsert.length > 0) {
-    const { error } = await supabase.from("tasks").insert(tasksToInsert);
-    if (error) {
-      console.error("Supabase insert error:", error);
-      return NextResponse.json(
-        { error: "Supabase insert failed", details: error.message },
-        { status: 500 }
-      );
+      const commitCards = commits
+        .map((c: any) => {
+          const githubUser = getGithubUsername(c);
+          return buildTaskDetailsCard({
+            taskName: (c.message?.split("\n")[0] || "GitHub commit").slice(0, 120),
+            description: c.message || "",
+            date: new Date().toISOString().split("T")[0],
+            location: c.url || payload.repository?.html_url || "",
+            status: "Completed",
+            assignee: githubUser,
+            assignedBy: "GitHub",
+            updatedAt: new Date().toISOString(),
+          });
+        })
+        .join('<div style="height:12px;"></div>');
+
+      const html = buildEmailHtml({
+        title: "New GitHub Push",
+        badge: "GitHub",
+        intro: `<strong>${escapeHtml(pusherName)}</strong> vừa push code mới lên repository <strong>${escapeHtml(repoName)}</strong> (branch: <code>${escapeHtml(branch)}</code>). Các task bên dưới đã được tự động thêm vào tracker với trạng thái <strong>Completed</strong>.`,
+        content:
+          commitCards ||
+          `<p style="font-size:13px;color:#94a3b8;">Không có commit message</p>`,
+      });
+
+      await sendMail(`[Crack Detection] ${pusherName} pushed to ${repoName}`, html);
+
+      return NextResponse.json({
+        ok: true,
+        message: "GitHub processed + email sent + tasks created",
+        inserted: tasksToInsert.length,
+      });
     }
-  }
-
-  const commitList = commits
-    .map(
-      (c: any) =>
-        `<tr>
-          <td style="padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155;">
-            • ${(c.message || "No message").split("\n")[0]}
-          </td>
-        </tr>`
-    )
-    .join("");
-
-  const html = buildEmailHtml({
-    title: "New GitHub Push",
-    badge: "GitHub",
-    content: `
-      <p style="margin:0 0 16px;font-size:15px;color:#334155;line-height:1.6;">
-        <strong>${pusherName}</strong> vừa push code mới lên repository <strong>${repoName}</strong> (branch: <code>${branch}</code>).
-      </p>
-      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">
-        Commits
-      </p>
-      <table width="100%" cellpadding="0" cellspacing="0">
-        ${commitList || "<tr><td style='font-size:13px;color:#94a3b8;'>Không có commit message</td></tr>"}
-      </table>
-      <p style="margin:20px 0 0;font-size:14px;color:#64748b;">
-        Các task đã được tự động thêm vào tracker với trạng thái <strong>Completed</strong>.
-      </p>
-    `,
-  });
-
-  await sendMail(`[Crack Detection] ${pusherName} pushed to ${repoName}`, html);
-
-  return NextResponse.json({
-    ok: true,
-    message: "GitHub processed + email sent + tasks created",
-    inserted: tasksToInsert.length,
-  });
-}
 
     // ========== 2. Status update ==========
     if (payload.type === "status") {
@@ -213,19 +319,13 @@ if (payload.repository || payload.pusher || payload.commits) {
       const html = buildEmailHtml({
         title: "Task Status Updated",
         badge: newStatus,
-        content: `
-          <p style="margin:0 0 16px;font-size:15px;color:#334155;line-height:1.6;">
-            Thành viên <strong>${user}</strong> vừa cập nhật trạng thái công việc:
-          </p>
-          <div style="background:#f8fafc;border-radius:10px;padding:16px 20px;margin-bottom:8px;">
-            <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Task</p>
-            <p style="margin:0;font-size:16px;font-weight:600;color:#0f172a;">${taskName}</p>
-          </div>
-          <div style="background:#f8fafc;border-radius:10px;padding:16px 20px;">
-            <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">New Status</p>
-            <p style="margin:0;font-size:16px;font-weight:600;color:#D96B1F;">${newStatus}</p>
-          </div>
-        `,
+        intro: `Thành viên <strong>${escapeHtml(user)}</strong> vừa cập nhật trạng thái công việc thành <strong>${escapeHtml(newStatus)}</strong>.`,
+        content: buildTaskDetailsCard({
+          ...payload,
+          taskName,
+          newStatus,
+          status: newStatus,
+        }),
       });
 
       await sendMail(`[Crack Detection] ${taskName} → ${newStatus}`, html);
@@ -234,42 +334,18 @@ if (payload.repository || payload.pusher || payload.commits) {
 
     // ========== 3. Assignment ==========
     if (payload.type === "assignment") {
-      const { taskName, date, location, status, assignedTo, assignedBy } = payload;
+      const { taskName, assignedTo, assignedBy } = payload;
 
       const html = buildEmailHtml({
         title: "New Task Assigned",
         badge: "Assignment",
-        content: `
-          <p style="margin:0 0 20px;font-size:15px;color:#334155;line-height:1.6;">
-            <strong>${assignedBy}</strong> vừa giao task cho <strong>${assignedTo}</strong>.
-          </p>
-          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:10px;overflow:hidden;">
-            <tr>
-              <td style="padding:14px 20px;border-bottom:1px solid #e2e8f0;">
-                <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;">Task</p>
-                <p style="margin:0;font-size:15px;font-weight:600;color:#0f172a;">${taskName}</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:14px 20px;border-bottom:1px solid #e2e8f0;">
-                <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;">Date</p>
-                <p style="margin:0;font-size:14px;color:#334155;">${date}</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:14px 20px;border-bottom:1px solid #e2e8f0;">
-                <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;">Status</p>
-                <p style="margin:0;font-size:14px;color:#334155;">${status}</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:14px 20px;">
-                <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;">Location</p>
-                <p style="margin:0;font-size:14px;color:#334155;">${location || "—"}</p>
-              </td>
-            </tr>
-          </table>
-        `,
+        intro: `<strong>${escapeHtml(assignedBy)}</strong> vừa giao task cho <strong>${escapeHtml(assignedTo)}</strong>.`,
+        content: buildTaskDetailsCard({
+          ...payload,
+          taskName,
+          assignee: assignedTo,
+          assignedBy,
+        }),
       });
 
       await sendMail(
@@ -282,38 +358,27 @@ if (payload.repository || payload.pusher || payload.commits) {
     // ========== 4. Deadline warning ==========
     if (payload.type === "deadline-warning") {
       const { taskName, deadline, assignee } = payload;
-      const deadlineStr = new Date(deadline).toLocaleString("vi-VN", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      const deadlineStr = deadline
+        ? new Date(deadline).toLocaleString("vi-VN", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "—";
 
       const html = buildEmailHtml({
         title: "Deadline Warning",
         badge: "Urgent",
-        badgeColor: "#dc2626",
-        content: `
-          <p style="margin:0 0 20px;font-size:15px;color:#334155;line-height:1.6;">
-            Task của <strong>${assignee}</strong> sắp đến hạn. Hãy hoàn thành sớm nhé!
-          </p>
-          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:20px;text-align:center;">
-            <p style="margin:0 0 8px;font-size:12px;color:#b91c1c;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">
-              Task
-            </p>
-            <p style="margin:0 0 16px;font-size:17px;font-weight:700;color:#0f172a;">
-              ${taskName}
-            </p>
-            <p style="margin:0 0 4px;font-size:12px;color:#b91c1c;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">
-              Deadline
-            </p>
-            <p style="margin:0;font-size:16px;font-weight:600;color:#dc2626;">
-              ${deadlineStr}
-            </p>
-          </div>
-        `,
+        intro: `Task của <strong>${escapeHtml(assignee)}</strong> sắp đến hạn (<strong style="color:#dc2626;">${escapeHtml(deadlineStr)}</strong>). Hãy hoàn thành sớm nhé!`,
+        content: buildTaskDetailsCard({
+          ...payload,
+          taskName,
+          assignee,
+          deadline,
+        }),
       });
 
       await sendMail(`[Crack Detection] Deadline sắp đến — ${taskName}`, html);
