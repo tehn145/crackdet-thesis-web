@@ -606,9 +606,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "assignment",
+          ...taskPayload(task),
           assignedTo: task.assignee,
           assignedBy: currentUser,
-          ...taskPayload(task),
         }),
       });
       return res.ok;
