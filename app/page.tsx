@@ -351,7 +351,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
   const [onlyMine, setOnlyMine] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("date-desc");
+  const [sortKey, setSortKey] = useState<SortKey>("date-desc"); // ← newest first
   const [submitting, setSubmitting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [detailsTask, setDetailsTask] = useState<Task | null>(null);
@@ -475,7 +475,7 @@ export default function Home() {
         const totalDurationMs = deadlineMs - new Date(`${t.date}T00:00:00`).getTime();
         const warnThreshold = totalDurationMs < ONE_DAY_MS ? 30 * 60 * 1000 : 6 * 60 * 60 * 1000;
         if (diff > 0 && diff <= warnThreshold) {
-          sendDeadlineWarningEmail(t.name, t.deadline, t.assignee).then(async (ok) => {
+          sendDeadlineWarningEmail(t).then(async (ok) => {
             if (ok) {
               const warnedAt = nowISO();
               await supabase.from("tasks").update({ deadline_warned_at: warnedAt }).eq("id", t.id);
@@ -547,26 +547,47 @@ export default function Home() {
     } catch {}
   };
 
-  const sendStatusEmail = async (taskName: string, status: string, user: string) => {
+  const taskPayload = (t: Partial<Task> & { name: string }) => ({
+    taskName: t.name,
+    description: t.description ?? "",
+    date: t.date ?? "",
+    location: t.location ?? "",
+    status: t.status ?? "todo",
+    assignee: t.assignee ?? "",
+    assignedBy: t.assignedBy ?? "",
+    estimatedDays: t.estimatedDays ?? null,
+    deadline: t.deadline ?? null,
+    updatedAt: t.updatedAt ?? "",
+  });
+
+  const sendStatusEmail = async (
+    task: Partial<Task> & { name: string },
+    newStatus: string,
+    user: string
+  ) => {
     try {
       await fetch("/api/update-status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "status", taskName, newStatus: status, user }),
+        body: JSON.stringify({
+          type: "status",
+          newStatus,
+          user,
+          ...taskPayload(task),
+        }),
       });
     } catch {}
   };
 
-  const sendDeadlineWarningEmail = async (
-    taskName: string,
-    deadline: string,
-    assignee: string
-  ): Promise<boolean> => {
+  const sendDeadlineWarningEmail = async (task: Task): Promise<boolean> => {
     try {
       const res = await fetch("/api/update-status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "deadline-warning", taskName, deadline, assignee }),
+        body: JSON.stringify({
+          type: "deadline-warning",
+          ...taskPayload(task),
+        }),
       });
       return res.ok;
     } catch {
@@ -585,12 +606,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "assignment",
-          taskName: task.name,
-          date: task.date,
-          location: task.location,
-          status: task.status,
           assignedTo: task.assignee,
           assignedBy: currentUser,
+          ...taskPayload(task),
         }),
       });
       return res.ok;
@@ -660,11 +678,16 @@ export default function Home() {
           updatedAt: nowISO(),
         };
 
-        const { error } = await supabase.from("tasks").update(toDb(updated)).eq("id", editingId);
-        if (error) throw error;
+        const payload = toDb(updated);
+        console.log("UPDATE payload:", payload);
+        const { error } = await supabase.from("tasks").update(payload).eq("id", editingId);
+        if (error) {
+          console.error("Supabase update error:", error);
+          throw error;
+        }
 
         setTasks((prev) => prev.map((t) => (t.id === editingId ? updated : t)));
-        await sendStatusEmail(cleaned.name, "Edited", cleaned.assignee);
+        await sendStatusEmail(updated, "Edited", cleaned.assignee);
         const emailed = await notifyAssignment(updated, prevTask?.assignee);
         showToast(
           emailed
@@ -680,17 +703,22 @@ export default function Home() {
           updatedAt: nowISO(),
         };
 
+        const payload = toDb(newTaskData);
+        console.log("INSERT payload:", payload);
         const { data, error } = await supabase
           .from("tasks")
-          .insert(toDb(newTaskData))
+          .insert(payload)
           .select()
           .single();
 
-        if (error) throw error;
+        if (error) {
+          console.error("Supabase insert error:", error);
+          throw error;
+        }
 
         const newTask = fromDb(data);
         setTasks((prev) => [newTask, ...prev]);
-        await sendStatusEmail(cleaned.name, "Added", cleaned.assignee);
+        await sendStatusEmail(newTask, "Added", cleaned.assignee);
         const emailed = await notifyAssignment(newTask, undefined);
         showToast(
           emailed
@@ -698,9 +726,14 @@ export default function Home() {
             : `Added "${cleaned.name}" to the tracker`
         );
       }
-    } catch (err) {
-      console.error(err);
-      showToast("Error saving task");
+    } catch (err: any) {
+      console.error("Save task error:", err);
+      const msg =
+        err?.message ||
+        err?.error_description ||
+        err?.details ||
+        (typeof err === "string" ? err : "Error saving task");
+      showToast(msg);
     } finally {
       setSubmitting(false);
       resetForm();
@@ -773,7 +806,7 @@ export default function Home() {
 
     setTasks((prev) => prev.filter((x) => x.id !== t.id));
     setOpenDropdown(null);
-    sendStatusEmail(t.name, "Deleted", t.assignee);
+    sendStatusEmail(t, "Deleted", t.assignee);
     showToast(`Deleted "${t.name}"`, async () => {
       const { data } = await supabase.from("tasks").insert(toDb(t)).select().single();
       if (data) setTasks((prev) => [fromDb(data), ...prev]);
@@ -793,10 +826,9 @@ export default function Home() {
       return;
     }
 
-    setTasks((prev) =>
-      prev.map((x) => (x.id === t.id ? { ...x, status, updatedAt: nowISO() } : x))
-    );
-    await sendStatusEmail(t.name, STATUS_META[status].label, t.assignee);
+    const updatedTask = { ...t, status, updatedAt: nowISO() };
+    setTasks((prev) => prev.map((x) => (x.id === t.id ? updatedTask : x)));
+    await sendStatusEmail(updatedTask, STATUS_META[status].label, t.assignee);
   };
 
   const handleReassign = async (t: Task) => {
@@ -849,6 +881,7 @@ export default function Home() {
         return list.sort((a, b) => a.assignee.localeCompare(b.assignee));
       case "date-desc":
       default:
+        // Newest first (by updatedAt)
         return list.sort((a, b) => {
           const timeA = new Date(a.updatedAt || a.date).getTime();
           const timeB = new Date(b.updatedAt || b.date).getTime();
@@ -1391,7 +1424,8 @@ export default function Home() {
             )}
           </div>
         )}
-      </main>
+
+        </main>
 
       {/* Deadline modal */}
       {deadlineModalOpen && (

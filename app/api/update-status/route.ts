@@ -315,16 +315,29 @@ export async function POST(request: Request) {
     // ========== 2. Status update ==========
     if (payload.type === "status") {
       const { taskName, newStatus, user } = payload;
+      console.log("Status email payload:", JSON.stringify(payload, null, 2));
+
+      const cardStatus =
+        newStatus === "Added" || newStatus === "Edited" || newStatus === "Deleted"
+          ? payload.status || newStatus
+          : newStatus || payload.status;
 
       const html = buildEmailHtml({
         title: "Task Status Updated",
         badge: newStatus,
         intro: `Thành viên <strong>${escapeHtml(user)}</strong> vừa cập nhật trạng thái công việc thành <strong>${escapeHtml(newStatus)}</strong>.`,
         content: buildTaskDetailsCard({
-          ...payload,
-          taskName,
+          taskName: taskName || payload.taskName,
+          description: payload.description,
+          date: payload.date,
+          location: payload.location,
+          status: cardStatus,
           newStatus,
-          status: newStatus,
+          assignee: payload.assignee || user,
+          assignedBy: payload.assignedBy || payload.assigned_by,
+          estimatedDays: payload.estimatedDays ?? payload.estimated_days ?? null,
+          deadline: payload.deadline ?? null,
+          updatedAt: payload.updatedAt || payload.updated_at,
         }),
       });
 
@@ -335,16 +348,23 @@ export async function POST(request: Request) {
     // ========== 3. Assignment ==========
     if (payload.type === "assignment") {
       const { taskName, assignedTo, assignedBy } = payload;
+      console.log("Assignment email payload:", JSON.stringify(payload, null, 2));
 
       const html = buildEmailHtml({
         title: "New Task Assigned",
         badge: "Assignment",
         intro: `<strong>${escapeHtml(assignedBy)}</strong> vừa giao task cho <strong>${escapeHtml(assignedTo)}</strong>.`,
         content: buildTaskDetailsCard({
-          ...payload,
-          taskName,
-          assignee: assignedTo,
-          assignedBy,
+          taskName: taskName || payload.taskName,
+          description: payload.description,
+          date: payload.date,
+          location: payload.location,
+          status: payload.status,
+          assignee: assignedTo || payload.assignee,
+          assignedBy: assignedBy || payload.assignedBy,
+          estimatedDays: payload.estimatedDays ?? payload.estimated_days ?? null,
+          deadline: payload.deadline ?? null,
+          updatedAt: payload.updatedAt || payload.updated_at,
         }),
       });
 
@@ -358,6 +378,7 @@ export async function POST(request: Request) {
     // ========== 4. Deadline warning ==========
     if (payload.type === "deadline-warning") {
       const { taskName, deadline, assignee } = payload;
+      console.log("Deadline warning payload:", JSON.stringify(payload, null, 2));
       const deadlineStr = deadline
         ? new Date(deadline).toLocaleString("vi-VN", {
             weekday: "long",
@@ -374,10 +395,16 @@ export async function POST(request: Request) {
         badge: "Urgent",
         intro: `Task của <strong>${escapeHtml(assignee)}</strong> sắp đến hạn (<strong style="color:#dc2626;">${escapeHtml(deadlineStr)}</strong>). Hãy hoàn thành sớm nhé!`,
         content: buildTaskDetailsCard({
-          ...payload,
-          taskName,
-          assignee,
-          deadline,
+          taskName: taskName || payload.taskName,
+          description: payload.description,
+          date: payload.date,
+          location: payload.location,
+          status: payload.status,
+          assignee: assignee || payload.assignee,
+          assignedBy: payload.assignedBy || payload.assigned_by,
+          estimatedDays: payload.estimatedDays ?? payload.estimated_days ?? null,
+          deadline: deadline ?? payload.deadline,
+          updatedAt: payload.updatedAt || payload.updated_at,
         }),
       });
 
