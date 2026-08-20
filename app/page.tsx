@@ -351,9 +351,10 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
   const [onlyMine, setOnlyMine] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("date-desc"); // ← newest first
+  const [sortKey, setSortKey] = useState<SortKey>("date-desc");
   const [submitting, setSubmitting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [detailsTask, setDetailsTask] = useState<Task | null>(null);
   const [toast, setToast] = useState<{ message: string; onUndo?: () => void } | null>(null);
   const toastTimer = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -505,6 +506,8 @@ export default function Home() {
       if (e.key !== "Escape") return;
       setFormOpen(false);
       setOpenDropdown(null);
+      setDetailsTask(null);
+      setDeadlineModalOpen(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -846,7 +849,6 @@ export default function Home() {
         return list.sort((a, b) => a.assignee.localeCompare(b.assignee));
       case "date-desc":
       default:
-        // Newest first (by updatedAt)
         return list.sort((a, b) => {
           const timeA = new Date(a.updatedAt || a.date).getTime();
           const timeB = new Date(b.updatedAt || b.date).getTime();
@@ -1100,7 +1102,7 @@ export default function Home() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap gap-3 mb-4">
+        <div className="flex flex-wrap gap-3 mb-4 items-center">
           <div className="relative flex-1 min-w-[200px]">
             <Icon.Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -1143,6 +1145,12 @@ export default function Home() {
           >
             Only mine
           </button>
+          <button
+            onClick={() => setFormOpen(true)}
+            className="flex items-center gap-2 bg-[#D96B1F] text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-[#c25f1a] transition shadow-sm text-sm ml-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D96B1F]"
+          >
+            <Icon.Plus className="w-4 h-4" /> Add Task
+          </button>
         </div>
 
         {/* Dashboard */}
@@ -1158,7 +1166,8 @@ export default function Home() {
                   return (
                     <li
                       key={t.id}
-                      className={`flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group ${
+                      onClick={() => setDetailsTask(t)}
+                      className={`flex gap-4 px-5 py-4 hover:bg-slate-50/70 transition group cursor-pointer ${
                         i === 0 ? "rounded-t-2xl" : ""
                       } ${i === filteredTasks.length - 1 ? "rounded-b-2xl" : ""} ${
                         t.assignee === currentUser ? "bg-[#FFFBF6]" : ""
@@ -1200,8 +1209,7 @@ export default function Home() {
                           </span>
                         )}
                         <span className="md:col-span-5 text-[11px] text-slate-400 font-mono truncate flex items-center gap-2 flex-wrap">
-                          {t.location && <span>↳ {t.location}</span>}
-                          <span>· Assigned by {t.assignedBy}</span>
+                          <span>Assigned by {t.assignedBy}</span>
                           <span
                             className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
                               isGithub
@@ -1216,6 +1224,7 @@ export default function Home() {
                       <div
                         className="relative shrink-0 flex items-center gap-1"
                         ref={openDropdown === t.id ? menuRef : undefined}
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <button
                           onClick={() => handleReassign(t)}
@@ -1283,7 +1292,8 @@ export default function Home() {
                       return (
                         <div
                           key={t.id}
-                          className={`bg-white border rounded-xl p-3 shadow-sm ${
+                          onClick={() => setDetailsTask(t)}
+                          className={`bg-white border rounded-xl p-3 shadow-sm cursor-pointer hover:shadow-md transition ${
                             t.assignee === currentUser ? "border-[#F0C39A]" : "border-slate-200"
                           }`}
                         >
@@ -1310,7 +1320,7 @@ export default function Home() {
                             <span className="text-[11px] font-mono text-slate-400">
                               {t.date} · {t.assignee}
                             </span>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                               {prev && (
                                 <button
                                   onClick={() => handleStatusChange(t, prev)}
@@ -1381,15 +1391,6 @@ export default function Home() {
             )}
           </div>
         )}
-
-        <div className="mt-6 flex justify-center">
-          <button
-            onClick={() => setFormOpen(true)}
-            className="flex items-center gap-2 bg-[#D96B1F] text-white font-semibold px-5 py-2.5 rounded-lg hover:bg-[#c25f1a] transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D96B1F]"
-          >
-            <Icon.Plus className="w-4 h-4" /> Add Task
-          </button>
-        </div>
       </main>
 
       {/* Deadline modal */}
@@ -1653,6 +1654,152 @@ export default function Home() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Task details modal */}
+      {detailsTask && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4"
+          onClick={() => setDetailsTask(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[85vh] overflow-y-auto"
+          >
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div className="min-w-0">
+                <p className="font-mono text-[11px] tracking-widest text-slate-400 uppercase mb-1">
+                  Task details
+                </p>
+                <h3 className="text-lg font-bold text-slate-900 leading-snug">{detailsTask.name}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailsTask(null)}
+                className="text-slate-400 hover:text-slate-700 shrink-0 p-1"
+                aria-label="Close"
+              >
+                <Icon.X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-sm">
+              <div className="flex flex-wrap gap-2">
+                <span className={`text-xs border px-2.5 py-1 rounded-full ${STATUS_META[detailsTask.status].badge}`}>
+                  {STATUS_META[detailsTask.status].label}
+                </span>
+                <span className="text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full text-slate-600">
+                  {detailsTask.assignee}
+                  {detailsTask.assignee === currentUser && (
+                    <span className="text-[#D96B1F] font-semibold"> · you</span>
+                  )}
+                </span>
+                {detailsTask.status !== "done" && (
+                  <span
+                    className={`text-xs border px-2.5 py-1 rounded-full ${
+                      DEADLINE_LEVEL_STYLE[getTaskDeadlineInfo(detailsTask, nowTick).level]
+                    }`}
+                  >
+                    {getTaskDeadlineInfo(detailsTask, nowTick).text}
+                  </span>
+                )}
+              </div>
+
+              {detailsTask.description ? (
+                <div>
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Description</p>
+                  <p className="text-slate-700 whitespace-pre-wrap leading-relaxed">{detailsTask.description}</p>
+                </div>
+              ) : (
+                <p className="text-slate-400 italic text-xs">No description</p>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Date</p>
+                  <p className="font-mono text-slate-800">{detailsTask.date}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Assigned by</p>
+                  <p className="text-slate-800">{detailsTask.assignedBy}</p>
+                </div>
+                {detailsTask.estimatedDays !== undefined && (
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Estimated</p>
+                    <p className="font-mono text-slate-800">
+                      {Math.floor(detailsTask.estimatedDays) > 0 && `${Math.floor(detailsTask.estimatedDays)}d `}
+                      {Math.round((detailsTask.estimatedDays % 1) * 24) > 0 &&
+                        `${Math.round((detailsTask.estimatedDays % 1) * 24)}h`}
+                      {detailsTask.estimatedDays === 0 && "—"}
+                    </p>
+                  </div>
+                )}
+                {detailsTask.deadline && (
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Deadline</p>
+                    <p className="font-mono text-slate-800">
+                      {new Date(detailsTask.deadline).toLocaleString("en-US", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {detailsTask.location && (
+                <div>
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Storage location / Link</p>
+                  {/^https?:\/\//i.test(detailsTask.location) ? (
+                    <a
+                      href={detailsTask.location}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#D96B1F] hover:underline break-all font-mono text-xs"
+                    >
+                      {detailsTask.location}
+                    </a>
+                  ) : (
+                    <p className="font-mono text-slate-700 text-xs break-all">{detailsTask.location}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="pt-1 border-t border-slate-100">
+                <p className="text-[11px] text-slate-400 font-mono">
+                  Last updated: {new Date(detailsTask.updatedAt).toLocaleString("en-US")}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailsTask(null);
+                  handleEdit(detailsTask);
+                }}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium"
+              >
+                <Icon.Pencil className="w-3.5 h-3.5" /> Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const t = detailsTask;
+                  setDetailsTask(null);
+                  handleDelete(t);
+                }}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-sm font-medium"
+              >
+                <Icon.Trash className="w-3.5 h-3.5" /> Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
